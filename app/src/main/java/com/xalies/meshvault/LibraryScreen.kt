@@ -15,8 +15,8 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Wifi // New Icon
-import androidx.compose.material.icons.filled.WifiOff // New Icon
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -37,17 +37,16 @@ fun LibraryScreen(onItemClick: (String) -> Unit = {}) {
     val dao = database.modelDao()
     val scope = rememberCoroutineScope()
 
-    // --- STATES ---
     var currentFolder by remember { mutableStateOf<String?>(null) }
     var showCreateFolderDialog by remember { mutableStateOf(false) }
 
     // Server States
     var isServerRunning by remember { mutableStateOf(false) }
     var serverIp by remember { mutableStateOf("") }
-    // We remember the server instance so we can stop it later
-    val server = remember { WifiServer() }
 
-    // Deletion States
+    // Using the new "No-Dependency" WifiServer
+    val wifiServer = remember { WifiServer() }
+
     var folderToDelete by remember { mutableStateOf<String?>(null) }
     var showDeleteWarning by remember { mutableStateOf(false) }
 
@@ -57,31 +56,29 @@ fun LibraryScreen(onItemClick: (String) -> Unit = {}) {
         currentFolder = null
     }
 
-    // Stop server when leaving the screen (optional, but good practice)
+    // Stop server when leaving screen
     DisposableEffect(Unit) {
         onDispose {
-            if (server.isAlive) {
-                server.stop()
+            if (wifiServer.isAlive) {
+                wifiServer.stop()
             }
         }
     }
 
     Scaffold(
         topBar = {
-            // Only show TopBar on the main Library list to hold the Wifi Button
             if (currentFolder == null) {
                 TopAppBar(
                     title = { Text("My Vault") },
                     actions = {
-                        // THE WIFI EXPORT BUTTON
                         IconButton(onClick = {
                             if (isServerRunning) {
-                                server.stop()
+                                wifiServer.stop()
                                 isServerRunning = false
                             } else {
                                 try {
-                                    server.start()
-                                    serverIp = getLocalIpAddress()
+                                    wifiServer.start()
+                                    serverIp = getLocalIpAddress() // Uses NetworkUtils.kt
                                     isServerRunning = true
                                 } catch (e: Exception) {
                                     e.printStackTrace()
@@ -109,28 +106,21 @@ fun LibraryScreen(onItemClick: (String) -> Unit = {}) {
 
         Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
 
-            // --- SERVER INFO BANNER ---
+            // Server Banner
             if (isServerRunning) {
                 Card(
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(16.dp)
-                        .fillMaxWidth(),
+                    modifier = Modifier.align(Alignment.TopCenter).padding(16.dp).fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text("PC Export Active", fontWeight = FontWeight.Bold)
-                        Text("Type this in your PC Browser:")
                         Text(serverIp, style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
                     }
                 }
             }
 
             if (currentFolder == null) {
-                // FOLDER GRID
-                // Add padding at top if banner is showing
                 val topPad = if (isServerRunning) 140.dp else 16.dp
-
                 Column(modifier = Modifier.fillMaxSize().padding(start = 16.dp, end = 16.dp, top = topPad)) {
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(2),
@@ -157,9 +147,7 @@ fun LibraryScreen(onItemClick: (String) -> Unit = {}) {
                     }
                 }
             } else {
-                // MODEL LIST
                 val models by dao.getModelsInFolder(currentFolder!!).collectAsState(initial = emptyList())
-
                 Column(modifier = Modifier.fillMaxSize()) {
                     TopAppBar(
                         title = { Text(currentFolder!!) },
@@ -169,13 +157,9 @@ fun LibraryScreen(onItemClick: (String) -> Unit = {}) {
                             }
                         }
                     )
-
                     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(models) { model ->
-                            ModelCardWithImage(
-                                model = model,
-                                onDelete = { scope.launch { dao.deleteModel(model.id) } }
-                            )
+                            ModelCardWithImage(model = model, onDelete = { scope.launch { dao.deleteModel(model.id) } })
                         }
                     }
                 }
@@ -183,18 +167,12 @@ fun LibraryScreen(onItemClick: (String) -> Unit = {}) {
         }
     }
 
-    // --- DIALOGS (Same as before) ---
     if (showCreateFolderDialog) {
         var newFolderName by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { showCreateFolderDialog = false },
             title = { Text("New Folder") },
-            text = {
-                OutlinedTextField(
-                    value = newFolderName, onValueChange = { newFolderName = it },
-                    label = { Text("Folder Name") }, singleLine = true
-                )
-            },
+            text = { OutlinedTextField(value = newFolderName, onValueChange = { newFolderName = it }, label = { Text("Folder Name") }) },
             confirmButton = {
                 TextButton(onClick = {
                     if (newFolderName.isNotBlank()) {
@@ -211,29 +189,23 @@ fun LibraryScreen(onItemClick: (String) -> Unit = {}) {
         AlertDialog(
             onDismissRequest = { showDeleteWarning = false },
             title = { Text("Delete Folder?") },
-            text = { Text("The folder '$folderToDelete' contains models. Deleting it will remove all models inside.\n\nAre you sure?") },
-            containerColor = MaterialTheme.colorScheme.errorContainer,
+            text = { Text("The folder '$folderToDelete' contains models. Deleting it will remove all models inside.") },
             confirmButton = {
-                Button(
-                    onClick = {
-                        scope.launch {
-                            folderToDelete?.let {
-                                dao.deleteModelsInFolder(it)
-                                dao.deleteFolder(it)
-                            }
-                            showDeleteWarning = false
-                            folderToDelete = null
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) { Text("Delete Everything") }
+                Button(onClick = {
+                    scope.launch {
+                        folderToDelete?.let { dao.deleteModelsInFolder(it); dao.deleteFolder(it) }
+                        showDeleteWarning = false
+                        folderToDelete = null
+                    }
+                }) { Text("Delete") }
             },
             dismissButton = { TextButton(onClick = { showDeleteWarning = false }) { Text("Cancel") } }
         )
     }
 }
 
-// --- KEEP CARD COMPONENTS ---
+// --- CARD COMPONENTS (These must be here!) ---
+
 @Composable
 fun FolderCard(name: String, onClick: () -> Unit, onDelete: () -> Unit) {
     Card(

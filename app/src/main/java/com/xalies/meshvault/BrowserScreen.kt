@@ -31,7 +31,7 @@ import kotlinx.coroutines.launch
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun BrowserScreen(webView: WebView) { // Accepting the shared WebView
+fun BrowserScreen(webView: WebView) {
     val context = LocalContext.current
     val database = remember { AppDatabase.getDatabase(context) }
     val dao = database.modelDao()
@@ -41,7 +41,6 @@ fun BrowserScreen(webView: WebView) { // Accepting the shared WebView
     val folders by dao.getAllFolders().collectAsState(initial = emptyList())
     var showNewFolderInput by remember { mutableStateOf(false) }
 
-    // Back Handler
     BackHandler(enabled = true) {
         if (webView.canGoBack()) {
             webView.goBack()
@@ -52,20 +51,28 @@ fun BrowserScreen(webView: WebView) { // Accepting the shared WebView
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = {
-                // CRITICAL: We are reusing a view that might already have a parent.
-                // We must detach it from the old parent before adding it here.
                 if (webView.parent != null) {
                     (webView.parent as ViewGroup).removeView(webView)
                 }
 
-                // Re-attach listeners to ensure Context is fresh
                 webView.apply {
                     setDownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
+                        // ENHANCED SCRAPER SCRIPT
                         val script = """
                             (function() {
-                                var img = document.querySelector('meta[property="og:image"]')?.content || "";
+                                // 1. Try Open Graph
+                                var img = document.querySelector('meta[property="og:image"]')?.content;
+                                // 2. Try Twitter Card
+                                if (!img) img = document.querySelector('meta[name="twitter:image"]')?.content;
+                                // 3. Try Schema.org itemprop
+                                if (!img) img = document.querySelector('[itemprop="image"]')?.src;
+                                // 4. Try standard link rel
+                                if (!img) img = document.querySelector('link[rel="image_src"]')?.href;
+                                
+                                // Get Title
                                 var title = document.querySelector('meta[property="og:title"]')?.content || document.title;
-                                return title + "|||" + img;
+                                
+                                return title + "|||" + (img || "");
                             })();
                         """.trimIndent()
 
@@ -82,21 +89,16 @@ fun BrowserScreen(webView: WebView) { // Accepting the shared WebView
                         override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                             val url = request?.url?.toString() ?: return false
                             if (url.startsWith("blob:") || url.startsWith("javascript:")) return false
-
                             val isAllowed = ALLOWED_DOMAINS.any { url.contains(it, ignoreCase = true) }
                             return !isAllowed
                         }
                     }
                 }
                 webView
-            },
-            update = {
-                // We don't need to load URL here anymore, it's handled in Dashboard/MainApp
             }
         )
     }
 
-    // --- FOLDER DIALOG (Unchanged) ---
     if (pendingDownload != null) {
         var newFolderName by remember { mutableStateOf("") }
         AlertDialog(
@@ -143,7 +145,6 @@ fun BrowserScreen(webView: WebView) { // Accepting the shared WebView
     }
 }
 
-// Ensure executeDownload is still in this file or imported
 fun executeDownload(context: Context, download: PendingDownload, folderName: String, dao: ModelDao, scope: kotlinx.coroutines.CoroutineScope) {
     val request = DownloadManager.Request(Uri.parse(download.url))
     val filename = URLUtil.guessFileName(download.url, download.contentDisposition, download.mimetype)

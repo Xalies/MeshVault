@@ -16,33 +16,45 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 fun DashboardScreen(onSiteSelected: (String) -> Unit) {
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Text("Dashboard", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text("Select a repository to start browsing", style = MaterialTheme.typography.bodyMedium)
+    // 1. Root Column to hold Content + Ad
+    Column(modifier = Modifier.fillMaxSize()) {
 
-        Spacer(modifier = Modifier.height(24.dp))
-
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(2),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+        // 2. Main Content (Weighted to take up all available space)
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(16.dp)
         ) {
-            items(SUPPORTED_SITES) { site ->
-                Card(
-                    modifier = Modifier.height(100.dp).clickable { onSiteSelected(site.url) },
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-                ) {
-                    Column(
-                        modifier = Modifier.fillMaxSize(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
+            Text("Dashboard", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text("Select a repository to start browsing", style = MaterialTheme.typography.bodyMedium)
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(2),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                items(SUPPORTED_SITES) { site ->
+                    Card(
+                        modifier = Modifier.height(100.dp).clickable { onSiteSelected(site.url) },
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
                     ) {
-                        Icon(Icons.Default.Public, null, modifier = Modifier.size(32.dp))
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(site.name, fontWeight = FontWeight.Bold)
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Icon(Icons.Default.Public, null, modifier = Modifier.size(32.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(site.name, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
         }
+
+        // 3. The Ad at the bottom
+        BannerAd(adUnitId = "ca-app-pub-9083635854272688/1452548007")
     }
 }

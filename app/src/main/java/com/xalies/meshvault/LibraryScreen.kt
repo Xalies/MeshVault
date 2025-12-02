@@ -26,8 +26,13 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex // Crucial Import
+import androidx.compose.ui.viewinterop.AndroidView // Needed for Ads
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
+import com.google.android.gms.ads.AdRequest
+import com.google.android.gms.ads.AdSize
+import com.google.android.gms.ads.AdView
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,19 +49,38 @@ fun LibraryScreen(onItemClick: (String) -> Unit = {}) {
     var isServerRunning by remember { mutableStateOf(false) }
     var serverIp by remember { mutableStateOf("") }
 
-    // Using the new "No-Dependency" WifiServer
-    val wifiServer = remember { WifiServer() }
+    // Pass DAO to Server
+    val wifiServer = remember { WifiServer(dao) }
 
     var folderToDelete by remember { mutableStateOf<String?>(null) }
     var showDeleteWarning by remember { mutableStateOf(false) }
 
-    val folders by dao.getAllFolders().collectAsState(initial = emptyList())
+    // Load all folders
+    val allFolders by dao.getAllFolders().collectAsState(initial = emptyList())
 
-    BackHandler(enabled = currentFolder != null) {
-        currentFolder = null
+    // Filter folders based on view (Root vs Subfolder)
+    val visibleFolders = remember(allFolders, currentFolder) {
+        if (currentFolder == null) {
+            // Root view: Show folders that have NO slashes
+            allFolders.filter { !it.name.contains("/") }
+        } else {
+            // Inside folder: Show folders that start with "currentFolder/" but no extra slashes
+            val prefix = "$currentFolder/"
+            allFolders.filter { it.name.startsWith(prefix) && !it.name.substringAfter(prefix).contains("/") }
+        }
     }
 
-    // Stop server when leaving screen
+    // Custom back logic for subfolders
+    BackHandler(enabled = currentFolder != null) {
+        if (currentFolder!!.contains("/")) {
+            // Go up one level
+            currentFolder = currentFolder!!.substringBeforeLast("/")
+        } else {
+            // Go to root
+            currentFolder = null
+        }
+    }
+
     DisposableEffect(Unit) {
         onDispose {
             if (wifiServer.isAlive) {
@@ -65,118 +89,176 @@ fun LibraryScreen(onItemClick: (String) -> Unit = {}) {
         }
     }
 
-    Scaffold(
-        topBar = {
-            if (currentFolder == null) {
-                TopAppBar(
-                    title = { Text("My Vault") },
-                    actions = {
-                        IconButton(onClick = {
-                            if (isServerRunning) {
-                                wifiServer.stop()
-                                isServerRunning = false
-                            } else {
-                                try {
-                                    wifiServer.start()
-                                    serverIp = getLocalIpAddress() // Uses NetworkUtils.kt
-                                    isServerRunning = true
-                                } catch (e: Exception) {
-                                    e.printStackTrace()
+    // --- MAIN LAYOUT STRUCTURE ---
+    Column(modifier = Modifier.fillMaxSize()) {
+
+        // 1. CONTENT AREA (Takes all available space)
+        Box(modifier = Modifier.weight(1f)) {
+            Scaffold(
+                topBar = {
+                    TopAppBar(
+                        title = {
+                            Text(if (currentFolder == null) "My Vault" else currentFolder!!.substringAfterLast("/"))
+                        },
+                        navigationIcon = {
+                            if (currentFolder != null) {
+                                IconButton(onClick = {
+                                    if (currentFolder!!.contains("/")) {
+                                        currentFolder = currentFolder!!.substringBeforeLast("/")
+                                    } else {
+                                        currentFolder = null
+                                    }
+                                }) {
+                                    Icon(Icons.Default.ArrowBack, "Back")
                                 }
                             }
-                        }) {
-                            Icon(
-                                if (isServerRunning) Icons.Default.Wifi else Icons.Default.WifiOff,
-                                contentDescription = "Export to PC",
-                                tint = if (isServerRunning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                    }
-                )
-            }
-        },
-        floatingActionButton = {
-            if (currentFolder == null) {
-                FloatingActionButton(onClick = { showCreateFolderDialog = true }) {
-                    Icon(Icons.Default.CreateNewFolder, "New Folder")
-                }
-            }
-        }
-    ) { innerPadding ->
-
-        Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
-
-            // Server Banner
-            if (isServerRunning) {
-                Card(
-                    modifier = Modifier.align(Alignment.TopCenter).padding(16.dp).fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text("PC Export Active", fontWeight = FontWeight.Bold)
-                        Text(serverIp, style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
-                    }
-                }
-            }
-
-            if (currentFolder == null) {
-                val topPad = if (isServerRunning) 140.dp else 16.dp
-                Column(modifier = Modifier.fillMaxSize().padding(start = 16.dp, end = 16.dp, top = topPad)) {
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(2),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        items(folders) { folder ->
-                            FolderCard(
-                                name = folder.name,
-                                onClick = { currentFolder = folder.name },
-                                onDelete = {
-                                    scope.launch {
-                                        val count = dao.getModelCount(folder.name)
-                                        if (count > 0) {
-                                            folderToDelete = folder.name
-                                            showDeleteWarning = true
-                                        } else {
-                                            dao.deleteFolder(folder.name)
+                        },
+                        actions = {
+                            // Only show Wifi Toggle at Root Level
+                            if (currentFolder == null) {
+                                IconButton(onClick = {
+                                    if (isServerRunning) {
+                                        wifiServer.stop()
+                                        isServerRunning = false
+                                    } else {
+                                        try {
+                                            wifiServer.start()
+                                            serverIp = getLocalIpAddress()
+                                            isServerRunning = true
+                                        } catch (e: Exception) {
+                                            e.printStackTrace()
                                         }
                                     }
+                                }) {
+                                    Icon(
+                                        if (isServerRunning) Icons.Default.Wifi else Icons.Default.WifiOff,
+                                        contentDescription = "Export to PC",
+                                        tint = if (isServerRunning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    )
                                 }
-                            )
-                        }
-                    }
-                }
-            } else {
-                val models by dao.getModelsInFolder(currentFolder!!).collectAsState(initial = emptyList())
-                Column(modifier = Modifier.fillMaxSize()) {
-                    TopAppBar(
-                        title = { Text(currentFolder!!) },
-                        navigationIcon = {
-                            IconButton(onClick = { currentFolder = null }) {
-                                Icon(Icons.Default.ArrowBack, "Back")
                             }
                         }
                     )
-                    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(models) { model ->
-                            ModelCardWithImage(model = model, onDelete = { scope.launch { dao.deleteModel(model.id) } })
+                },
+                floatingActionButton = {
+                    FloatingActionButton(onClick = { showCreateFolderDialog = true }) {
+                        Icon(Icons.Default.CreateNewFolder, "New Folder")
+                    }
+                }
+            ) { innerPadding ->
+
+                Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
+
+                    // Server Banner
+                    if (isServerRunning && currentFolder == null) {
+                        Card(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(16.dp)
+                                .fillMaxWidth()
+                                .zIndex(1f),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text("PC Export Active", fontWeight = FontWeight.Bold)
+                                Text(serverIp, style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                    }
+
+                    // Content
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        val topPad = if (isServerRunning && currentFolder == null) 140.dp else 0.dp
+
+                        // A. Folders
+                        if (visibleFolders.isNotEmpty()) {
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(2),
+                                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp + topPad, bottom = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(16.dp),
+                                modifier = Modifier.weight(1f, fill = false)
+                            ) {
+                                items(visibleFolders) { folder ->
+                                    val displayName = folder.name.substringAfterLast("/")
+                                    FolderCard(
+                                        name = displayName,
+                                        onClick = { currentFolder = folder.name },
+                                        onDelete = {
+                                            scope.launch {
+                                                val count = dao.getModelCount(folder.name)
+                                                if (count > 0) {
+                                                    folderToDelete = folder.name
+                                                    showDeleteWarning = true
+                                                } else {
+                                                    dao.deleteFolder(folder.name)
+                                                }
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+
+                        // B. Models (Only if inside a folder)
+                        if (currentFolder != null) {
+                            val models by dao.getModelsInFolder(currentFolder!!).collectAsState(initial = emptyList())
+
+                            if (models.isNotEmpty()) {
+                                Text(
+                                    "Models",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                LazyColumn(
+                                    contentPadding = PaddingValues(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    items(models) { model ->
+                                        ModelCardWithImage(model = model, onDelete = { scope.launch { dao.deleteModel(model.id) } })
+                                    }
+                                }
+                            } else if (visibleFolders.isEmpty()) {
+                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text("Empty Folder", color = Color.Gray)
+                                }
+                            }
                         }
                     }
                 }
             }
         }
+
+        // 2. BANNER AD (Fixed at the bottom)
+        AndroidView(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp),
+            factory = { context ->
+                AdView(context).apply {
+                    setAdSize(AdSize.BANNER)
+                    setAdUnitId("ca-app-pub-9083635854272688/1452548007")
+                    loadAd(AdRequest.Builder().build())
+                }
+            }
+        )
     }
+
+    // --- DIALOGS ---
 
     if (showCreateFolderDialog) {
         var newFolderName by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { showCreateFolderDialog = false },
-            title = { Text("New Folder") },
-            text = { OutlinedTextField(value = newFolderName, onValueChange = { newFolderName = it }, label = { Text("Folder Name") }) },
+            title = { Text(if (currentFolder == null) "New Folder" else "New Subfolder") },
+            text = { OutlinedTextField(value = newFolderName, onValueChange = { newFolderName = it }, label = { Text("Name") }) },
             confirmButton = {
                 TextButton(onClick = {
                     if (newFolderName.isNotBlank()) {
-                        scope.launch { dao.insertFolder(FolderEntity(newFolderName)) }
+                        val finalName = if (currentFolder == null) newFolderName else "$currentFolder/$newFolderName"
+                        scope.launch { dao.insertFolder(FolderEntity(finalName)) }
                         showCreateFolderDialog = false
                     }
                 }) { Text("Create") }
@@ -189,7 +271,7 @@ fun LibraryScreen(onItemClick: (String) -> Unit = {}) {
         AlertDialog(
             onDismissRequest = { showDeleteWarning = false },
             title = { Text("Delete Folder?") },
-            text = { Text("The folder '$folderToDelete' contains models. Deleting it will remove all models inside.") },
+            text = { Text("The folder '$folderToDelete' contains items. Deleting it will remove all contents.") },
             confirmButton = {
                 Button(onClick = {
                     scope.launch {
@@ -204,7 +286,7 @@ fun LibraryScreen(onItemClick: (String) -> Unit = {}) {
     }
 }
 
-// --- CARD COMPONENTS (These must be here!) ---
+// --- CARD COMPONENTS ---
 
 @Composable
 fun FolderCard(name: String, onClick: () -> Unit, onDelete: () -> Unit) {

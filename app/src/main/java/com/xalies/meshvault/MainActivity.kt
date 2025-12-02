@@ -22,10 +22,15 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.xalies.meshvault.ui.theme.MeshVaultTheme
+import com.google.android.gms.ads.MobileAds
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Initialize AdMob
+        MobileAds.initialize(this) {}
+
         setContent {
             MeshVaultTheme {
                 MainApp()

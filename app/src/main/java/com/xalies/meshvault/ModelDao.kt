@@ -22,7 +22,10 @@ interface ModelDao {
     @Query("SELECT * FROM models WHERE folderName = :folderName ORDER BY dateAdded DESC")
     fun getModelsInFolder(folderName: String): Flow<List<ModelEntity>>
 
-    // NEW: Fast count to check if we can safely delete
+    // NEW: Get list for the Wifi Server (Suspend function)
+    @Query("SELECT * FROM models WHERE folderName = :folderName")
+    suspend fun getModelsInFolderList(folderName: String): List<ModelEntity>
+
     @Query("SELECT COUNT(*) FROM models WHERE folderName = :folderName")
     suspend fun getModelCount(folderName: String): Int
 

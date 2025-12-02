@@ -66,4 +66,5 @@ dependencies {
     implementation("androidx.room:room-ktx:$room_version") // Kotlin extensions
     ksp("androidx.room:room-compiler:$room_version")
     implementation("org.nanohttpd:nanohttpd:2.3.1")
+    implementation("com.google.android.gms:play-services-ads:23.0.0")
 }

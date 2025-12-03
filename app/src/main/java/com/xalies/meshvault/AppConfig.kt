@@ -20,7 +20,8 @@ val ALLOWED_DOMAINS = listOf(
 
 // 4. Data Class for handling downloads
 data class PendingDownload(
-    val url: String,
+    val url: String,       // The Direct File Link (e.g. .zip)
+    val pageUrl: String,   // NEW: The Website Page (e.g. /model/123)
     val userAgent: String,
     val contentDisposition: String,
     val mimetype: String,

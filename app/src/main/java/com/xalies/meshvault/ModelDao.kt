@@ -12,6 +12,7 @@ interface ModelDao {
     @Query("SELECT * FROM folders ORDER BY name ASC")
     fun getAllFolders(): Flow<List<FolderEntity>>
 
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertFolder(folder: FolderEntity)
 
@@ -22,7 +23,6 @@ interface ModelDao {
     @Query("SELECT * FROM models WHERE folderName = :folderName ORDER BY dateAdded DESC")
     fun getModelsInFolder(folderName: String): Flow<List<ModelEntity>>
 
-    // NEW: Get list for the Wifi Server (Suspend function)
     @Query("SELECT * FROM models WHERE folderName = :folderName")
     suspend fun getModelsInFolderList(folderName: String): List<ModelEntity>
 

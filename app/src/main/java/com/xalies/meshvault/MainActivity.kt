@@ -140,7 +140,24 @@ fun MainApp() {
             }
 
             composable("library") {
-                LibraryScreen()
+                LibraryScreen(
+                    onItemClick = { url ->
+                        // 1. Update the shared URL state
+                        currentBrowserUrl = url
+
+                        // 2. Force the persistent WebView to load it immediately
+                        sharedWebView.loadUrl(url)
+
+                        // 3. Switch tabs to the Browser
+                        navController.navigate("browser") {
+                            popUpTo(navController.graph.findStartDestination().id) {
+                                saveState = true
+                            }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    }
+                )
             }
         }
     }

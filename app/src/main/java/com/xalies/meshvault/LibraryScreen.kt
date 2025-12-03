@@ -1,5 +1,6 @@
 package com.xalies.meshvault
 
+import android.os.Environment
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -26,17 +27,18 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.zIndex // Crucial Import
-import androidx.compose.ui.viewinterop.AndroidView // Needed for Ads
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.viewinterop.AndroidView
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
 import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.AdSize
 import com.google.android.gms.ads.AdView
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LibraryScreen(onItemClick: (String) -> Unit = {}) {
+fun LibraryScreen(onItemClick: (String) -> Unit) {
     val context = LocalContext.current
     val database = remember { AppDatabase.getDatabase(context) }
     val dao = database.modelDao()
@@ -49,34 +51,26 @@ fun LibraryScreen(onItemClick: (String) -> Unit = {}) {
     var isServerRunning by remember { mutableStateOf(false) }
     var serverIp by remember { mutableStateOf("") }
 
-    // Pass DAO to Server
     val wifiServer = remember { WifiServer(dao) }
 
     var folderToDelete by remember { mutableStateOf<String?>(null) }
     var showDeleteWarning by remember { mutableStateOf(false) }
 
-    // Load all folders
     val allFolders by dao.getAllFolders().collectAsState(initial = emptyList())
 
-    // Filter folders based on view (Root vs Subfolder)
     val visibleFolders = remember(allFolders, currentFolder) {
         if (currentFolder == null) {
-            // Root view: Show folders that have NO slashes
             allFolders.filter { !it.name.contains("/") }
         } else {
-            // Inside folder: Show folders that start with "currentFolder/" but no extra slashes
             val prefix = "$currentFolder/"
             allFolders.filter { it.name.startsWith(prefix) && !it.name.substringAfter(prefix).contains("/") }
         }
     }
 
-    // Custom back logic for subfolders
     BackHandler(enabled = currentFolder != null) {
         if (currentFolder!!.contains("/")) {
-            // Go up one level
             currentFolder = currentFolder!!.substringBeforeLast("/")
         } else {
-            // Go to root
             currentFolder = null
         }
     }
@@ -89,10 +83,8 @@ fun LibraryScreen(onItemClick: (String) -> Unit = {}) {
         }
     }
 
-    // --- MAIN LAYOUT STRUCTURE ---
     Column(modifier = Modifier.fillMaxSize()) {
 
-        // 1. CONTENT AREA (Takes all available space)
         Box(modifier = Modifier.weight(1f)) {
             Scaffold(
                 topBar = {
@@ -114,28 +106,26 @@ fun LibraryScreen(onItemClick: (String) -> Unit = {}) {
                             }
                         },
                         actions = {
-                            // Only show Wifi Toggle at Root Level
-                            if (currentFolder == null) {
-                                IconButton(onClick = {
-                                    if (isServerRunning) {
-                                        wifiServer.stop()
-                                        isServerRunning = false
-                                    } else {
-                                        try {
-                                            wifiServer.start()
-                                            serverIp = getLocalIpAddress()
-                                            isServerRunning = true
-                                        } catch (e: Exception) {
-                                            e.printStackTrace()
-                                        }
+                            // MOVED: Wifi Toggle is now always visible
+                            IconButton(onClick = {
+                                if (isServerRunning) {
+                                    wifiServer.stop()
+                                    isServerRunning = false
+                                } else {
+                                    try {
+                                        wifiServer.start()
+                                        serverIp = getLocalIpAddress()
+                                        isServerRunning = true
+                                    } catch (e: Exception) {
+                                        e.printStackTrace()
                                     }
-                                }) {
-                                    Icon(
-                                        if (isServerRunning) Icons.Default.Wifi else Icons.Default.WifiOff,
-                                        contentDescription = "Export to PC",
-                                        tint = if (isServerRunning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                    )
                                 }
+                            }) {
+                                Icon(
+                                    if (isServerRunning) Icons.Default.Wifi else Icons.Default.WifiOff,
+                                    contentDescription = "Export to PC",
+                                    tint = if (isServerRunning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                )
                             }
                         }
                     )
@@ -149,8 +139,7 @@ fun LibraryScreen(onItemClick: (String) -> Unit = {}) {
 
                 Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
 
-                    // Server Banner
-                    if (isServerRunning && currentFolder == null) {
+                    if (isServerRunning) {
                         Card(
                             modifier = Modifier
                                 .align(Alignment.TopCenter)
@@ -166,9 +155,8 @@ fun LibraryScreen(onItemClick: (String) -> Unit = {}) {
                         }
                     }
 
-                    // Content
                     Column(modifier = Modifier.fillMaxSize()) {
-                        val topPad = if (isServerRunning && currentFolder == null) 140.dp else 0.dp
+                        val topPad = if (isServerRunning) 140.dp else 0.dp
 
                         // A. Folders
                         if (visibleFolders.isNotEmpty()) {
@@ -200,7 +188,7 @@ fun LibraryScreen(onItemClick: (String) -> Unit = {}) {
                             }
                         }
 
-                        // B. Models (Only if inside a folder)
+                        // B. Models
                         if (currentFolder != null) {
                             val models by dao.getModelsInFolder(currentFolder!!).collectAsState(initial = emptyList())
 
@@ -217,7 +205,12 @@ fun LibraryScreen(onItemClick: (String) -> Unit = {}) {
                                     modifier = Modifier.weight(1f)
                                 ) {
                                     items(models) { model ->
-                                        ModelCardWithImage(model = model, onDelete = { scope.launch { dao.deleteModel(model.id) } })
+                                        // Pass the pageUrl to the click handler
+                                        ModelCardWithImage(
+                                            model = model,
+                                            onClick = { onItemClick(model.pageUrl) },
+                                            onDelete = { scope.launch { dao.deleteModel(model.id) } }
+                                        )
                                     }
                                 }
                             } else if (visibleFolders.isEmpty()) {
@@ -231,7 +224,6 @@ fun LibraryScreen(onItemClick: (String) -> Unit = {}) {
             }
         }
 
-        // 2. BANNER AD (Fixed at the bottom)
         AndroidView(
             modifier = Modifier
                 .fillMaxWidth()
@@ -245,8 +237,6 @@ fun LibraryScreen(onItemClick: (String) -> Unit = {}) {
             }
         )
     }
-
-    // --- DIALOGS ---
 
     if (showCreateFolderDialog) {
         var newFolderName by remember { mutableStateOf("") }
@@ -307,12 +297,29 @@ fun FolderCard(name: String, onClick: () -> Unit, onDelete: () -> Unit) {
 }
 
 @Composable
-fun ModelCardWithImage(model: ModelEntity, onDelete: () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth().height(100.dp), elevation = CardDefaults.cardElevation(2.dp)) {
+fun ModelCardWithImage(model: ModelEntity, onClick: () -> Unit, onDelete: () -> Unit) {
+    // FIX: Resolve path for display
+    // If it's http, use it. If not, build absolute path.
+    val imagePath = if (model.thumbnailUrl?.startsWith("http") == true) {
+        model.thumbnailUrl
+    } else if (!model.thumbnailUrl.isNullOrEmpty()) {
+        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "MeshVault/${model.thumbnailUrl}")
+    } else {
+        null
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(100.dp)
+            .clickable { onClick() }, // CLICK HANDLER
+        elevation = CardDefaults.cardElevation(2.dp)
+    ) {
         Row(modifier = Modifier.fillMaxSize()) {
-            if (!model.thumbnailUrl.isNullOrEmpty()) {
+            if (imagePath != null) {
                 AsyncImage(
-                    model = model.thumbnailUrl, contentDescription = null,
+                    model = imagePath, // Passing the File object or URL
+                    contentDescription = null,
                     modifier = Modifier.width(100.dp).fillMaxHeight().background(Color.Gray),
                     contentScale = ContentScale.Crop
                 )

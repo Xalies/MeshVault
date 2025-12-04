@@ -1,9 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Permissions for Browser & Cloud Sync -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Permissions for the WiFi Server to find local IP -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -14,25 +19,44 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.MeshVault"
         android:usesCleartextTraffic="true">
+
+        <!-- AdMob App ID (Must be inside <application>) -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
             android:value="ca-app-pub-9083635854272688~6696587080"/>
+
+        <!--
+             MainActivity Configuration:
+             1. android:exported="true" -> Essential for Launchers and Deep Links to find it.
+             2. android:configChanges -> Prevents app restart on rotation (fixes WebView reload bug).
+        -->
         <activity
             android:name=".MainActivity"
-            android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="true"
             android:label="@string/app_name"
-            android:theme="@style/Theme.MeshVault">
+            android:theme="@style/Theme.MeshVault"
+            android:configChanges="orientation|screenSize|keyboardHidden">
+
+            <!-- 1. THE LAUNCHER INTENT (Makes icon appear in App Drawer) -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- 2. DEEP LINKING (Optional: Opens 3D site links in your app) -->
+            <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
 
+                <!-- Supported Domains -->
                 <data android:scheme="https" android:host="www.printables.com" />
+                <data android:scheme="https" android:host="printables.com" />
                 <data android:scheme="https" android:host="www.thingiverse.com" />
+                <data android:scheme="https" android:host="thingiverse.com" />
+                <data android:scheme="https" android:host="makerworld.com" />
             </intent-filter>
+
         </activity>
     </application>
 

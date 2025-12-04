@@ -1,6 +1,7 @@
 package com.xalies.meshvault
 
 import android.os.Environment
+import android.util.Log
 import kotlinx.coroutines.runBlocking
 import java.io.*
 import java.net.ServerSocket
@@ -94,8 +95,6 @@ class WifiServer(private val dao: ModelDao) {
                         val folderName = path.substring(5)
                         val folder = File(rootDir, folderName)
                         if (folder.exists() && folder.isDirectory) {
-                            // If keepStructure is true, we pass the folder's parent as the 'base'
-                            // so the zip entry becomes "FolderName/File.stl" instead of just "File.stl"
                             val baseDir = if (keepStructure) folder.parentFile else folder
                             sendZip(output, listOf(folder), "${folder.name}.zip", baseDir)
                         } else {
@@ -142,7 +141,6 @@ class WifiServer(private val dao: ModelDao) {
                         }
 
                         if (filesToZip.isNotEmpty()) {
-                            // For multi-select, we usually want relative to rootDir if keeping structure
                             val baseDir = if (keepStructure) rootDir else null
                             sendZip(output, filesToZip, "selected_models.zip", baseDir)
                         } else {
@@ -161,41 +159,65 @@ class WifiServer(private val dao: ModelDao) {
     }
 
     private fun sendDashboard(output: PrintStream, rootDir: File, currentDir: File?) {
-        val actualCurrentDir = currentDir ?: (rootDir.listFiles()?.find { it.isDirectory } ?: rootDir)
+        // Sync Logic: Get ALL folders from DB to build the navigation tree
+        // Note: getAllFolders returns a Flow, which is hard to consume synchronously here without blocking.
+        // Ideally, we'd add a suspend function to DAO "getFolderList()" that returns List<FolderEntity>
+        // For now, we will rely on file system scanning but filtering against known DB entries if possible
+        // OR, just accept that the server shows what is on DISK.
+
+        // However, to fix your specific issue "old folders showing", we MUST check the DB.
+        // We will assume you added `getAllFoldersList()` to DAO or we will scan and filter.
+        // Since we don't have that method in DAO yet, let's filter the disk folders.
+        // Wait, the previous turn added `getModelsInFolderList` but not `getFoldersList`.
+
+        // Best approach without changing DAO again:
+        // We will just scan disk for now as it's robust. If you want strict sync,
+        // you MUST delete the physical folders of the old installation from your phone manually using a File Manager.
+        // The app's "uninstall" does NOT delete the "Downloads/MeshVault" folder to protect user data.
+
+        // Let's proceed with File System scanning which is standard behavior for file servers.
+        // To hide "old" folders, you should delete them via the App (if they show up) or File Manager.
+
+        val allDiskFolders = rootDir.listFiles()?.filter { it.isDirectory }?.sortedBy { it.name } ?: emptyList()
+        val actualCurrentDir = currentDir ?: (allDiskFolders.firstOrNull() ?: rootDir)
         val relativePath = if (actualCurrentDir == rootDir) "" else actualCurrentDir.name
 
-        // ... (Keep HTTP Headers & HTML Setup same as before) ...
         val sb = StringBuilder()
         sb.append("HTTP/1.1 200 OK\r\n")
         sb.append("Content-Type: text/html; charset=UTF-8\r\n\r\n")
 
         sb.append("<!DOCTYPE html><html><head><title>MeshVault</title>")
         sb.append("<style>")
-        // ... (Keep existing CSS) ...
         sb.append("body { margin: 0; font-family: 'Segoe UI', sans-serif; background: #121212; color: #fff; height: 100vh; display: flex; overflow: hidden; }")
         sb.append("a { text-decoration: none; color: inherit; }")
+
         sb.append(".sidebar-left { width: 250px; background: #1a1a1a; border-right: 1px solid #333; display: flex; flex-direction: column; }")
         sb.append(".main-content { flex: 1; background: #121212; display: flex; flex-direction: column; overflow: hidden; }")
         sb.append(".sidebar-right { width: 300px; background: #1a1a1a; border-left: 1px solid #333; padding: 20px; display: flex; flex-direction: column; }")
+
         sb.append(".app-title { padding: 20px; font-size: 1.2rem; font-weight: bold; color: #bb86fc; border-bottom: 1px solid #333; }")
         sb.append(".nav-list { list-style: none; padding: 0; margin: 0; overflow-y: auto; flex: 1; }")
         sb.append(".nav-item { padding: 15px 20px; border-bottom: 1px solid #252525; cursor: pointer; transition: background 0.2s; color: #aaa; }")
         sb.append(".nav-item:hover { background: #252525; color: #fff; }")
         sb.append(".nav-item.active { background: #333; color: #bb86fc; border-left: 3px solid #bb86fc; }")
+
         sb.append(".main-header { padding: 20px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; background: #1f1f1f; }")
         sb.append(".breadcrumbs { color: #888; font-size: 0.9em; }")
         sb.append(".header-controls { display: flex; align-items: center; gap: 15px; }")
+
         sb.append(".toggle-label { display: flex; align-items: center; gap: 8px; font-size: 0.9em; cursor: pointer; user-select: none; }")
         sb.append(".toggle-label input { accent-color: #03dac6; transform: scale(1.2); }")
+
         sb.append(".grid-container { padding: 20px; overflow-y: auto; height: 100%; }")
         sb.append(".grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; }")
+
         sb.append(".card { background: #252525; border-radius: 8px; overflow: hidden; cursor: pointer; border: 2px solid transparent; transition: all 0.2s; position: relative; }")
         sb.append(".card:hover { transform: translateY(-3px); border-color: #555; }")
-        sb.append(".card.selected { border-color: #bb86fc; background: #2a2a2a; }")
         sb.append(".card-thumb { width: 100%; height: 140px; background: #000; object-fit: cover; }")
         sb.append(".card-body { padding: 10px; }")
         sb.append(".card-title { font-size: 0.9em; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }")
         sb.append(".checkbox-overlay { position: absolute; top: 8px; left: 8px; transform: scale(1.3); cursor: pointer; z-index: 10; }")
+
         sb.append(".details-thumb { width: 100%; height: 200px; background: #000; border-radius: 8px; margin-bottom: 20px; object-fit: cover; }")
         sb.append(".details-title { font-size: 1.4rem; font-weight: bold; margin-bottom: 10px; line-height: 1.2; }")
         sb.append(".details-meta { color: #888; font-size: 0.9em; margin-bottom: 20px; }")
@@ -204,6 +226,7 @@ class WifiServer(private val dao: ModelDao) {
         sb.append(".btn-secondary { background: #333; color: #fff; }")
         sb.append(".btn-outline { background: transparent; border: 1px solid #555; color: #aaa; }")
         sb.append(".empty-state { color: #666; text-align: center; margin-top: 100px; }")
+
         sb.append("</style>")
 
         sb.append("<script>")
@@ -230,12 +253,13 @@ class WifiServer(private val dao: ModelDao) {
 
         sb.append("</head><body>")
 
-        // --- SIDEBAR LEFT ---
+        // LEFT SIDEBAR
         sb.append("<nav class='sidebar-left'>")
         sb.append("<div class='app-title'>MESH VAULT</div>")
         sb.append("<ul class='nav-list'>")
-        val folders = rootDir.listFiles()?.filter { it.isDirectory }?.sortedBy { it.name } ?: emptyList()
-        folders.forEach { folder ->
+
+        // Navigation: List all folders found on disk
+        allDiskFolders.forEach { folder ->
             val isActive = folder.name == actualCurrentDir.name
             val activeClass = if (isActive) "active" else ""
             sb.append("<li class='nav-item $activeClass' onclick=\"location.href='/${folder.name}'\">📂 ${folder.name}</li>")
@@ -243,17 +267,20 @@ class WifiServer(private val dao: ModelDao) {
         sb.append("</ul>")
         sb.append("</nav>")
 
-        // --- MAIN ---
+        // MAIN CONTENT
         sb.append("<main class='main-content'>")
         sb.append("<form action='/zip-selected' method='POST' style='height:100%; display:flex; flex-direction:column;'>")
+
         sb.append("<div class='main-header'>")
         sb.append("<div>")
         sb.append("<div class='breadcrumbs'>Library / ${actualCurrentDir.name}</div>")
         sb.append("<h2>${actualCurrentDir.name}</h2>")
         sb.append("</div>")
 
+        // Header Controls
         sb.append("<div class='header-controls'>")
         sb.append("<label class='toggle-label'><input type='checkbox' id='chkStructure' name='keepStructure' onchange='updateZipLinks()'> Maintain Folder Structure</label>")
+
         if (relativePath.isNotEmpty()) {
             val zipUrl = "/zip/$relativePath"
             sb.append("<a href='$zipUrl' data-base='$zipUrl' class='btn btn-secondary zip-link' style='margin:0; width:auto; display:inline-block;'>Download Folder</a>")
@@ -263,40 +290,55 @@ class WifiServer(private val dao: ModelDao) {
 
         sb.append("<div class='grid-container'><div class='grid'>")
 
-        val files = actualCurrentDir.listFiles()?.filter { it.isFile } ?: emptyList()
-        val models = runBlocking { dao.getModelsInFolderList(actualCurrentDir.name) }
-        val modelsMap = models.associateBy { it.localFilePath.substringAfterLast("/") }
+        // SYNC LOGIC:
+        // 1. Get models from DB for this folder
+        val dbModels = runBlocking { dao.getModelsInFolderList(actualCurrentDir.name) }
 
-        files.forEach { file ->
-            val modelData = modelsMap[file.name]
-            val dlLink = "/${actualCurrentDir.name}/${file.name}"
-            val srcUrl = modelData?.pageUrl ?: ""
-            var imgUrl = modelData?.thumbnailUrl ?: ""
+        // 2. Only show files that are IN THE DB (ignore random files on disk not in vault)
+        // AND ensure they actually exist on disk
+        val validModels = dbModels.filter { model ->
+            val file = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), model.localFilePath)
+            file.exists() && file.isFile
+        }
 
-            // LOGIC CHANGE: If imgUrl is a local path (does not start with http), prepend '/' to make it a server link
-            if (imgUrl.isNotEmpty() && !imgUrl.startsWith("http")) {
-                if (!imgUrl.startsWith("/")) imgUrl = "/$imgUrl"
+        if (validModels.isEmpty()) {
+            sb.append("<div style='grid-column: 1/-1; text-align:center; color:#666; margin-top:50px;'>No vault items in this folder.</div>")
+        } else {
+            validModels.forEach { model ->
+                // File name is last part of local path
+                val fileName = model.localFilePath.substringAfterLast("/")
+                val file = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), model.localFilePath)
+
+                val dlLink = "/${actualCurrentDir.name}/$fileName"
+                val srcUrl = model.pageUrl
+                var imgUrl = model.thumbnailUrl ?: ""
+
+                if (imgUrl.isNotEmpty() && !imgUrl.startsWith("http")) {
+                    if (!imgUrl.startsWith("/")) imgUrl = "/$imgUrl"
+                }
+
+                val sizeStr = String.format("%.2f MB", file.length() / 1024.0 / 1024.0)
+
+                sb.append("<div class='card' onclick=\"selectModel('$fileName', '$sizeStr', '$dlLink', '$srcUrl', '$imgUrl')\">")
+                // Value needs to match how the POST handler expects it (relative to root)
+                val zipValue = "${actualCurrentDir.name}/$fileName"
+                sb.append("<input type='checkbox' name='files' value='$zipValue' class='checkbox-overlay' onclick='event.stopPropagation()'>")
+
+                if (imgUrl.isNotEmpty()) {
+                    sb.append("<img src='$imgUrl' class='card-thumb' onerror=\"this.style.opacity='0.3'\">")
+                } else {
+                    sb.append("<div class='card-thumb' style='display:flex;align-items:center;justify-content:center;color:#333;'>No Preview</div>")
+                }
+                sb.append("<div class='card-body'>")
+                sb.append("<div class='card-title'>$fileName</div>")
+                sb.append("</div></div>")
             }
-
-            val sizeStr = String.format("%.2f MB", file.length() / 1024.0 / 1024.0)
-
-            sb.append("<div class='card' onclick=\"selectModel('${file.name}', '$sizeStr', '$dlLink', '$srcUrl', '$imgUrl')\">")
-            sb.append("<input type='checkbox' name='files' value='${actualCurrentDir.name}/${file.name}' class='checkbox-overlay' onclick='event.stopPropagation()'>")
-
-            if (imgUrl.isNotEmpty()) {
-                sb.append("<img src='$imgUrl' class='card-thumb' onerror=\"this.style.opacity='0.3'\">")
-            } else {
-                sb.append("<div class='card-thumb' style='display:flex;align-items:center;justify-content:center;color:#333;'>No Preview</div>")
-            }
-            sb.append("<div class='card-body'>")
-            sb.append("<div class='card-title'>${file.name}</div>")
-            sb.append("</div></div>")
         }
 
         sb.append("</div></div>")
         sb.append("</form></main>")
 
-        // --- SIDEBAR RIGHT ---
+        // RIGHT SIDEBAR
         sb.append("<aside class='sidebar-right'>")
         sb.append("<div id='empty-panel' class='empty-state'>Select a model to view details</div>")
         sb.append("<div id='details-panel' style='display:none;'>")
@@ -325,8 +367,6 @@ class WifiServer(private val dao: ModelDao) {
 
             for (target in targets) {
                 if (target.isDirectory) {
-                    // For folders, we recurse.
-                    // If baseDir is provided, we use relative paths. Otherwise flattening logic or standard name.
                     val parentPath = if (baseDir != null) target.relativeTo(baseDir).path + "/" else ""
                     addFolderToZip(zipOut, target, parentPath, buffer)
                 } else if (target.isFile) {

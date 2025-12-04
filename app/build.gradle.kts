@@ -40,6 +40,11 @@ android {
     buildFeatures {
         compose = true
     }
+    packaging {
+        resources {
+            excludes += "META-INF/DEPENDENCIES"
+        }
+    }
 }
 val room_version = "2.6.1"
 dependencies {
@@ -70,6 +75,7 @@ dependencies {
     implementation("com.android.billingclient:billing:7.0.0")
     implementation("com.google.android.gms:play-services-auth:21.0.0")
     implementation("com.google.api-client:google-api-client-android:2.2.0")
+    implementation("com.google.http-client:google-http-client-android:1.43.3")
     implementation("com.google.apis:google-api-services-drive:v3-rev20220815-2.0.0")
     implementation("androidx.work:work-runtime-ktx:2.9.0")
 }

@@ -1,5 +1,6 @@
 package com.xalies.meshvault
 
+import android.content.Context
 import android.os.Environment
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -78,6 +79,7 @@ val FOLDER_ICONS = mapOf(
 @Composable
 fun LibraryScreen(onItemClick: (String) -> Unit) {
     val context = LocalContext.current
+    val preferences = remember { context.getSharedPreferences("library_prefs", Context.MODE_PRIVATE) }
     val database = remember { AppDatabase.getDatabase(context) }
     val dao = database.modelDao()
     val scope = rememberCoroutineScope()
@@ -105,26 +107,24 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
 
     // --- DEFAULT FOLDERS LOGIC ---
     LaunchedEffect(Unit) {
-        // We check if the database is empty (or just check for a known default)
-        // Since `getAllFolders` is a Flow, we can't easily check it inside LaunchedEffect synchronously
-        // So we do a quick check: if "Household" doesn't exist, we assume it's a fresh install/db wipe.
-        // Ideally, we'd have a preference flag, but checking the DB is robust enough here.
-        val householdExists = dao.getModelCount("Household") > 0 // This checks models, not folders. Let's assume emptiness for now.
-        // Better check: query folders directly. But dao.getAllFolders() returns Flow.
-        // Let's just insert them with OnConflictStrategy.IGNORE.
+        val defaultsInitialized = preferences.getBoolean("defaults_initialized", false)
 
-        val defaults = listOf(
-            FolderEntity("Household", color = FOLDER_COLORS.random(), iconName = "Home"),
-            FolderEntity("Games", color = FOLDER_COLORS.random(), iconName = "Game"),
-            FolderEntity("Gadgets", color = FOLDER_COLORS.random(), iconName = "Build"),
-            FolderEntity("Cosplay", color = FOLDER_COLORS.random(), iconName = "Face"),
-            // Subfolders for Cosplay
-            FolderEntity("Cosplay/Masks", color = FOLDER_COLORS.random(), iconName = "Face"),
-            FolderEntity("Cosplay/Props", color = FOLDER_COLORS.random(), iconName = "Star")
-        )
+        if (!defaultsInitialized) {
+            val defaults = listOf(
+                FolderEntity("Household", color = FOLDER_COLORS.random(), iconName = "Home"),
+                FolderEntity("Games", color = FOLDER_COLORS.random(), iconName = "Game"),
+                FolderEntity("Gadgets", color = FOLDER_COLORS.random(), iconName = "Build"),
+                FolderEntity("Cosplay", color = FOLDER_COLORS.random(), iconName = "Face"),
+                // Subfolders for Cosplay
+                FolderEntity("Cosplay/Masks", color = FOLDER_COLORS.random(), iconName = "Face"),
+                FolderEntity("Cosplay/Props", color = FOLDER_COLORS.random(), iconName = "Star")
+            )
 
-        defaults.forEach { folder ->
-            dao.insertFolder(folder)
+            defaults.forEach { folder ->
+                dao.insertFolder(folder)
+            }
+
+            preferences.edit().putBoolean("defaults_initialized", true).apply()
         }
     }
 

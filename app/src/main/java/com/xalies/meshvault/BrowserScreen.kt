@@ -13,11 +13,18 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background // Added import
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CreateNewFolder
@@ -26,8 +33,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color // Added import
+import androidx.compose.ui.composed
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
@@ -36,8 +49,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import java.net.HttpURLConnection
 import java.net.URL
 
+
+@OptIn(ExperimentalFoundationApi::class)
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun BrowserScreen(webView: WebView) {
@@ -50,6 +66,10 @@ fun BrowserScreen(webView: WebView) {
     val folders by dao.getAllFolders().collectAsState(initial = emptyList())
     var showNewFolderInput by remember { mutableStateOf(false) }
 
+    // Subfolder Creation State
+    var showSubfolderDialog by remember { mutableStateOf(false) }
+    var targetParentFolder by remember { mutableStateOf<FolderEntity?>(null) }
+
     // Progress State
     var loadProgress by remember { mutableFloatStateOf(0f) }
 
@@ -59,7 +79,6 @@ fun BrowserScreen(webView: WebView) {
         }
     }
 
-    // FIX 1: Set the main container background to Black
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
 
         AndroidView(
@@ -70,7 +89,6 @@ fun BrowserScreen(webView: WebView) {
                 }
 
                 webView.apply {
-                    // FIX 2: Set the WebView itself to be Black while loading
                     setBackgroundColor(android.graphics.Color.BLACK)
 
                     webChromeClient = object : WebChromeClient() {
@@ -82,21 +100,47 @@ fun BrowserScreen(webView: WebView) {
                     setDownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
                         val currentPage = this.url ?: ""
 
+                        // --- ROBUST SCRAPER ---
                         val script = """
                             (function() {
-                                function findMainImage() {
-                                    var img = document.querySelector('meta[property="og:image"]')?.content;
-                                    if (img) return img;
-                                    img = document.querySelector('meta[name="twitter:image"]')?.content;
-                                    if (img) return img;
-                                    img = document.querySelector('[itemprop="image"]')?.src;
-                                    if (img) return img;
-                                    var galleryImg = document.querySelector('.gallery-image, .swipe-slide img, .model-preview img');
-                                    if (galleryImg) return galleryImg.src;
-                                    return "";
+                                function getLargestImage() {
+                                    var maxArea = 0;
+                                    var bestUrl = "";
+                                    var images = document.getElementsByTagName('img');
+                                    
+                                    for (var i = 0; i < images.length; i++) {
+                                        var img = images[i];
+                                        // Ignore tiny icons (must be > 150px wide/tall)
+                                        if (img.naturalWidth < 150 || img.naturalHeight < 150) continue;
+                                        
+                                        var area = img.width * img.height;
+                                        if (area > maxArea) {
+                                            maxArea = area;
+                                            bestUrl = img.src || img.dataset.src;
+                                        }
+                                    }
+                                    return bestUrl;
                                 }
+
+                                function findMainImage() {
+                                    // 1. Try Meta Tags
+                                    var img = document.querySelector('meta[property="og:image"]')?.content ||
+                                              document.querySelector('meta[name="twitter:image"]')?.content;
+                                    if (img) return img;
+                                    
+                                    // 2. Try Schema.org (Meta or Img)
+                                    var schemaImg = document.querySelector('[itemprop="image"]');
+                                    if (schemaImg) {
+                                        return schemaImg.content || schemaImg.src;
+                                    }
+                                    
+                                    // 3. Fallback: Visual Scan for biggest image
+                                    return getLargestImage();
+                                }
+                                
                                 var title = document.querySelector('meta[property="og:title"]')?.content || document.title;
                                 var finalImg = findMainImage();
+                                
                                 return title + "|||" + (finalImg || "");
                             })();
                         """.trimIndent()
@@ -133,20 +177,24 @@ fun BrowserScreen(webView: WebView) {
                     .align(Alignment.TopCenter)
                     .zIndex(2f),
                 color = MaterialTheme.colorScheme.primary,
-                trackColor = Color.Transparent // Make the empty part of the bar invisible
+                trackColor = Color.Transparent
             )
         }
     }
 
+    // --- MAIN DOWNLOAD DIALOG ---
     if (pendingDownload != null) {
         var newFolderName by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { pendingDownload = null },
             title = { Text("Save to Vault") },
             text = {
-                Column {
+                // Use a fixed-size Column to prevent layout jumps
+                Column(modifier = Modifier.fillMaxWidth()) {
                     Text("Model: ${pendingDownload?.title ?: "Unknown"}", style = MaterialTheme.typography.bodySmall)
+                    Text("Tip: Long press a folder to create a subfolder inside it.", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
                     Spacer(modifier = Modifier.height(16.dp))
+
                     if (showNewFolderInput) {
                         OutlinedTextField(
                             value = newFolderName, onValueChange = { newFolderName = it },
@@ -154,7 +202,9 @@ fun BrowserScreen(webView: WebView) {
                             trailingIcon = {
                                 IconButton(onClick = {
                                     if (newFolderName.isNotBlank()) {
-                                        scope.launch { dao.insertFolder(FolderEntity(newFolderName)) }
+                                        scope.launch {
+                                            dao.insertFolder(FolderEntity(newFolderName, color = 0xFF49454F, iconName = "Folder"))
+                                        }
                                         newFolderName = ""
                                         showNewFolderInput = false
                                     }
@@ -166,20 +216,138 @@ fun BrowserScreen(webView: WebView) {
                             Icon(Icons.Default.CreateNewFolder, null); Text(" Create New Folder")
                         }
                     }
+
                     Divider(modifier = Modifier.padding(vertical = 8.dp))
-                    LazyColumn(modifier = Modifier.heightIn(max = 250.dp)) {
-                        items(folders) { folder ->
-                            Row(modifier = Modifier.fillMaxWidth().clickable {
-                                pendingDownload?.let { executeDownload(context, it, folder.name, dao, scope) }
-                                pendingDownload = null
-                            }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Folder, null); Spacer(modifier = Modifier.width(12.dp)); Text(folder.name)
+
+                    // 1. FIXED HEIGHT CONTAINER FOR LIST
+                    val listState = rememberLazyListState()
+                    Box(
+                        modifier = Modifier
+                            .height(300.dp)
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surface)
+                    ) {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .simpleVerticalScrollbar(listState),
+                            contentPadding = PaddingValues(vertical = 4.dp)
+                        ) {
+                            items(folders) { folder ->
+                                val isSubfolder = folder.name.contains("/")
+                                val indent = if (isSubfolder) 32.dp else 0.dp
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .combinedClickable(
+                                            onClick = {
+                                                pendingDownload?.let { executeDownload(context, it, folder.name, dao, scope) }
+                                                pendingDownload = null
+                                            },
+                                            onLongClick = {
+                                                targetParentFolder = folder
+                                                showSubfolderDialog = true
+                                            }
+                                        )
+                                        .padding(vertical = 12.dp, horizontal = 8.dp)
+                                        .padding(start = indent), // Add indentation
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    // Colorful Icon
+                                    val icon = FOLDER_ICONS[folder.iconName] ?: Icons.Default.Folder
+                                    val color = if (folder.color == 0L) Color(0xFF49454F) else Color(folder.color)
+
+                                    Box(
+                                        modifier = Modifier
+                                            .size(40.dp)
+                                            .clip(CircleShape)
+                                            .background(color),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(icon, null, tint = Color.White)
+                                    }
+
+                                    Spacer(modifier = Modifier.width(16.dp))
+                                    Text(
+                                        folder.name.substringAfterLast("/"),
+                                        style = MaterialTheme.typography.bodyLarge
+                                    )
+                                }
+                                Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                             }
                         }
                     }
                 }
             },
             confirmButton = {}
+        )
+    }
+
+    // --- SUBFOLDER CREATION DIALOG ---
+    if (showSubfolderDialog && targetParentFolder != null) {
+        var subfolderName by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showSubfolderDialog = false },
+            title = { Text("Create Subfolder") },
+            text = {
+                Column {
+                    Text("Create inside '${targetParentFolder!!.name.substringAfterLast("/")}'")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = subfolderName,
+                        onValueChange = { subfolderName = it },
+                        label = { Text("Subfolder Name") },
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (subfolderName.isNotBlank()) {
+                        val newPath = "${targetParentFolder!!.name}/$subfolderName"
+                        scope.launch {
+                            // Inherit color/icon or use default
+                            dao.insertFolder(FolderEntity(newPath, color = 0xFF49454F, iconName = "Folder"))
+                        }
+                        showSubfolderDialog = false
+                    }
+                }) { Text("Create") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSubfolderDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+// Custom Modifier to draw a simple vertical scrollbar
+fun Modifier.simpleVerticalScrollbar(
+    state: LazyListState,
+    width: Dp = 4.dp
+): Modifier = composed {
+    val targetAlpha = if (state.isScrollInProgress) 1f else 0.3f
+    val duration = if (state.isScrollInProgress) 150 else 500
+
+    val alpha by animateFloatAsState(
+        targetValue = targetAlpha,
+        animationSpec = tween(durationMillis = duration), label = ""
+    )
+
+    drawWithContent {
+        drawContent()
+
+        val firstVisibleElementIndex = state.firstVisibleItemIndex
+        val elementHeight = this.size.height / state.layoutInfo.totalItemsCount
+        val scrollbarOffsetY = firstVisibleElementIndex * elementHeight
+        val scrollbarHeight = state.layoutInfo.visibleItemsInfo.size * elementHeight
+
+        drawRect(
+            color = Color.Gray.copy(alpha = alpha),
+            topLeft = Offset(this.size.width - width.toPx(), scrollbarOffsetY),
+            size = Size(width.toPx(), scrollbarHeight),
+            alpha = alpha
         )
     }
 }
@@ -202,7 +370,13 @@ fun executeDownload(context: Context, download: PendingDownload, folderName: Str
                 if (!vaultDir.exists()) vaultDir.mkdirs()
 
                 val imgFile = File(vaultDir, imgFilename)
-                URL(download.imageUrl).openStream().use { input ->
+
+                val url = URL(download.imageUrl)
+                val connection = url.openConnection() as HttpURLConnection
+                connection.setRequestProperty("User-Agent", download.userAgent)
+                connection.connect()
+
+                connection.inputStream.use { input ->
                     FileOutputStream(imgFile).use { output ->
                         input.copyTo(output)
                     }

@@ -344,15 +344,63 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
     // 1. CREATE FOLDER
     if (showCreateFolderDialog) {
         var newFolderName by remember { mutableStateOf("") }
+        var selectedColor by remember { mutableLongStateOf(FOLDER_COLORS.random()) }
+        var selectedIcon by remember { mutableStateOf("Folder") }
+
         AlertDialog(
             onDismissRequest = { showCreateFolderDialog = false },
             title = { Text(if (currentFolder == null) "New Folder" else "New Subfolder") },
-            text = { OutlinedTextField(value = newFolderName, onValueChange = { newFolderName = it }, label = { Text("Name") }) },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = newFolderName,
+                        onValueChange = { newFolderName = it },
+                        label = { Text("Name") }
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text("Select Color", style = MaterialTheme.typography.labelMedium)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        FOLDER_COLORS.forEach { colorVal ->
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(colorVal))
+                                    .border(if (selectedColor == colorVal) 2.dp else 0.dp, Color.White, CircleShape)
+                                    .clickable { selectedColor = colorVal }
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("Select Icon", style = MaterialTheme.typography.labelMedium)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LazyVerticalGrid(columns = GridCells.Adaptive(40.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(FOLDER_ICONS.keys.toList()) { iconName ->
+                            val icon = FOLDER_ICONS[iconName]!!
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (selectedIcon == iconName) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
+                                    .clickable { selectedIcon = iconName },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(icon, null, tint = MaterialTheme.colorScheme.onSurface)
+                            }
+                        }
+                    }
+                }
+            },
             confirmButton = {
                 TextButton(onClick = {
                     if (newFolderName.isNotBlank()) {
                         val finalName = if (currentFolder == null) newFolderName else "$currentFolder/$newFolderName"
-                        scope.launch { dao.insertFolder(FolderEntity(finalName)) }
+                        scope.launch {
+                            dao.insertFolder(FolderEntity(name = finalName, color = selectedColor, iconName = selectedIcon))
+                        }
                         showCreateFolderDialog = false
                     }
                 }) { Text("Create") }

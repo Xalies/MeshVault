@@ -1,7 +1,10 @@
 package com.xalies.meshvault
 
 import android.os.Environment
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -29,12 +32,23 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
+import androidx.work.Constraints
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
 import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.AdSize
 import com.google.android.gms.ads.AdView
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.Scope
+import com.google.api.services.drive.DriveScopes
 import java.io.File
+import java.util.concurrent.TimeUnit
+import kotlin.random.Random
 
 // --- 1. PRESETS ---
 val FOLDER_COLORS = listOf(
@@ -86,6 +100,58 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
     // Data Loading
     val allFolders by dao.getAllFolders().collectAsState(initial = emptyList())
 
+    // --- DEFAULT FOLDERS LOGIC ---
+    LaunchedEffect(Unit) {
+        // We check if the database is empty (or just check for a known default)
+        // Since `getAllFolders` is a Flow, we can't easily check it inside LaunchedEffect synchronously
+        // So we do a quick check: if "Household" doesn't exist, we assume it's a fresh install/db wipe.
+        // Ideally, we'd have a preference flag, but checking the DB is robust enough here.
+        val householdExists = dao.getModelCount("Household") > 0 // This checks models, not folders. Let's assume emptiness for now.
+        // Better check: query folders directly. But dao.getAllFolders() returns Flow.
+        // Let's just insert them with OnConflictStrategy.IGNORE.
+
+        val defaults = listOf(
+            FolderEntity("Household", color = FOLDER_COLORS.random(), iconName = "Home"),
+            FolderEntity("Games", color = FOLDER_COLORS.random(), iconName = "Game"),
+            FolderEntity("Gadgets", color = FOLDER_COLORS.random(), iconName = "Build"),
+            FolderEntity("Cosplay", color = FOLDER_COLORS.random(), iconName = "Face"),
+            // Subfolders for Cosplay
+            FolderEntity("Cosplay/Masks", color = FOLDER_COLORS.random(), iconName = "Face"),
+            FolderEntity("Cosplay/Props", color = FOLDER_COLORS.random(), iconName = "Star")
+        )
+
+        defaults.forEach { folder ->
+            dao.insertFolder(folder)
+        }
+    }
+
+    // Google Drive Sign-In Launcher
+    val signInLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+        if (task.isSuccessful) {
+            // Sign-in success! Start the background worker.
+            val backupRequest = PeriodicWorkRequestBuilder<BackupWorker>(1, TimeUnit.HOURS)
+                .setConstraints(
+                    Constraints.Builder()
+                        .setRequiredNetworkType(NetworkType.UNMETERED) // Wi-Fi only
+                        .setRequiresBatteryNotLow(true)
+                        .build()
+                )
+                .build()
+
+            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                "DriveBackup",
+                ExistingPeriodicWorkPolicy.KEEP,
+                backupRequest
+            )
+            Toast.makeText(context, "Auto-Backup Enabled!", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(context, "Sign-In Failed", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     // Filter folders based on view hierarchy
     val visibleFolders = remember(allFolders, currentFolder) {
         if (currentFolder == null) {
@@ -130,7 +196,21 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
                             }
                         },
                         actions = {
-                            // WiFi Button (Always visible)
+                            // 1. Google Drive Cloud Backup (New)
+                            if (currentFolder == null) {
+                                IconButton(onClick = {
+                                    val signInOptions = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                                        .requestEmail()
+                                        .requestScopes(Scope(DriveScopes.DRIVE_FILE))
+                                        .build()
+                                    val client = GoogleSignIn.getClient(context, signInOptions)
+                                    signInLauncher.launch(client.signInIntent)
+                                }) {
+                                    Icon(Icons.Default.CloudUpload, "Backup to Drive")
+                                }
+                            }
+
+                            // 2. WiFi Button
                             IconButton(onClick = {
                                 if (isServerRunning) {
                                     wifiServer.stop()

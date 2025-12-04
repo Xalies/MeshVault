@@ -7,12 +7,13 @@ import android.net.Uri
 import android.os.Environment
 import android.view.ViewGroup
 import android.webkit.URLUtil
-import android.webkit.WebChromeClient // Added for Progress
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background // Added import
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -25,10 +26,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color // Added import
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.zIndex // Added for layering the progress bar
+import androidx.compose.ui.zIndex
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -48,7 +50,7 @@ fun BrowserScreen(webView: WebView) {
     val folders by dao.getAllFolders().collectAsState(initial = emptyList())
     var showNewFolderInput by remember { mutableStateOf(false) }
 
-    // Progress State (0.0 to 1.0)
+    // Progress State
     var loadProgress by remember { mutableFloatStateOf(0f) }
 
     BackHandler(enabled = true) {
@@ -57,9 +59,9 @@ fun BrowserScreen(webView: WebView) {
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    // FIX 1: Set the main container background to Black
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
 
-        // 1. The Browser View
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = {
@@ -68,7 +70,9 @@ fun BrowserScreen(webView: WebView) {
                 }
 
                 webView.apply {
-                    // Attach Chrome Client for Progress Updates
+                    // FIX 2: Set the WebView itself to be Black while loading
+                    setBackgroundColor(android.graphics.Color.BLACK)
+
                     webChromeClient = object : WebChromeClient() {
                         override fun onProgressChanged(view: WebView?, newProgress: Int) {
                             loadProgress = newProgress / 100f
@@ -76,34 +80,23 @@ fun BrowserScreen(webView: WebView) {
                     }
 
                     setDownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
-                        // Capture current page URL for "Source Link"
                         val currentPage = this.url ?: ""
 
-                        // --- AGGRESSIVE SCRAPER ---
                         val script = """
                             (function() {
                                 function findMainImage() {
-                                    // A. Try Standard Meta Tags
                                     var img = document.querySelector('meta[property="og:image"]')?.content;
                                     if (img) return img;
-                                    
                                     img = document.querySelector('meta[name="twitter:image"]')?.content;
                                     if (img) return img;
-                                    
-                                    // B. Try Schema.org
                                     img = document.querySelector('[itemprop="image"]')?.src;
                                     if (img) return img;
-                                    
-                                    // C. Try specific site selectors
                                     var galleryImg = document.querySelector('.gallery-image, .swipe-slide img, .model-preview img');
                                     if (galleryImg) return galleryImg.src;
-
                                     return "";
                                 }
-                                
                                 var title = document.querySelector('meta[property="og:title"]')?.content || document.title;
                                 var finalImg = findMainImage();
-                                
                                 return title + "|||" + (finalImg || "");
                             })();
                         """.trimIndent()
@@ -111,7 +104,6 @@ fun BrowserScreen(webView: WebView) {
                         this.evaluateJavascript(script) { result ->
                             val cleanResult = result.replace("^\"|\"$".toRegex(), "")
                             val unescaped = cleanResult.replace("\\/", "/")
-
                             val parts = unescaped.split("|||")
                             val t = if (parts.isNotEmpty()) parts[0] else "Unknown"
                             val i = if (parts.size > 1) parts[1] else ""
@@ -133,19 +125,19 @@ fun BrowserScreen(webView: WebView) {
             }
         )
 
-        // 2. Loading Indicator (Shows only when loading)
         if (loadProgress < 1.0f) {
             LinearProgressIndicator(
                 progress = { loadProgress },
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.TopCenter)
-                    .zIndex(2f), // Ensure it sits on top of the WebView
+                    .zIndex(2f),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = Color.Transparent // Make the empty part of the bar invisible
             )
         }
     }
 
-    // --- Save Dialog Logic ---
     if (pendingDownload != null) {
         var newFolderName by remember { mutableStateOf("") }
         AlertDialog(
@@ -193,7 +185,6 @@ fun BrowserScreen(webView: WebView) {
 }
 
 fun executeDownload(context: Context, download: PendingDownload, folderName: String, dao: ModelDao, scope: kotlinx.coroutines.CoroutineScope) {
-    // 1. Download File
     val request = DownloadManager.Request(Uri.parse(download.url))
     val filename = URLUtil.guessFileName(download.url, download.contentDisposition, download.mimetype)
     request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
@@ -201,7 +192,6 @@ fun executeDownload(context: Context, download: PendingDownload, folderName: Str
     val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
     dm.enqueue(request)
 
-    // 2. Download Image
     scope.launch(Dispatchers.IO) {
         var localImagePath = ""
 
@@ -217,14 +207,12 @@ fun executeDownload(context: Context, download: PendingDownload, folderName: Str
                         input.copyTo(output)
                     }
                 }
-                // Save Relative Path for portability
                 localImagePath = "$folderName/$imgFilename"
             } catch (e: Exception) {
                 e.printStackTrace()
             }
         }
 
-        // 3. Save to DB (Using Page URL, not File URL)
         val newModel = ModelEntity(
             title = download.title,
             pageUrl = download.pageUrl,

@@ -1,16 +1,16 @@
 package com.xalies.meshvault
 
+import androidx.compose.foundation.Image // <--- NEW IMPORT
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Public
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource // <--- NEW IMPORT
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
@@ -19,7 +19,7 @@ fun DashboardScreen(onSiteSelected: (String) -> Unit) {
     // 1. Root Column to hold Content + Ad
     Column(modifier = Modifier.fillMaxSize()) {
 
-        // 2. Main Content (Weighted to take up all available space)
+        // 2. Main Content (Weighted)
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -45,7 +45,13 @@ fun DashboardScreen(onSiteSelected: (String) -> Unit) {
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center
                         ) {
-                            Icon(Icons.Default.Public, null, modifier = Modifier.size(32.dp))
+                            // REPLACED Icon WITH Image
+                            Image(
+                                painter = painterResource(id = site.iconRes),
+                                contentDescription = site.name,
+                                modifier = Modifier.size(48.dp) // Adjusted size for PNG logos
+                            )
+
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(site.name, fontWeight = FontWeight.Bold)
                         }

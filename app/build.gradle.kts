@@ -68,4 +68,8 @@ dependencies {
     implementation("org.nanohttpd:nanohttpd:2.3.1")
     implementation("com.google.android.gms:play-services-ads:23.0.0")
     implementation("com.android.billingclient:billing:7.0.0")
+    implementation("com.google.android.gms:play-services-auth:21.0.0")
+    implementation("com.google.api-client:google-api-client-android:2.2.0")
+    implementation("com.google.apis:google-api-services-drive:v3-rev20220815-2.0.0")
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
 }

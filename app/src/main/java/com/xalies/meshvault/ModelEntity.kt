@@ -10,6 +10,7 @@ data class ModelEntity(
     val pageUrl: String,
     val localFilePath: String, // Where the zip/stl is
     val folderName: String,    // Replaced "category" with "folderName" to be clear
-    val thumbnailUrl: String? = null, // <--- NEW!
-    val dateAdded: Long = System.currentTimeMillis()
+    val thumbnailUrl: String? = null,
+    val dateAdded: Long = System.currentTimeMillis(),
+    val googleDriveId: String? = null // New field for backup tracking
 )

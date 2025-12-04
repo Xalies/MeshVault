@@ -5,12 +5,11 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [ModelEntity::class, FolderEntity::class], version = 2) // Added FolderEntity, Version 2
+@Database(entities = [ModelEntity::class, FolderEntity::class], version = 4) // Bumped to 4 for googleDriveId
 abstract class AppDatabase : RoomDatabase() {
     abstract fun modelDao(): ModelDao
 
     companion object {
-        // Singleton pattern to prevent multiple database instances
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
@@ -20,7 +19,9 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "meshvault_database"
-                ).build()
+                )
+                    .fallbackToDestructiveMigration() // Wipe DB on schema change
+                    .build()
                 INSTANCE = instance
                 instance
             }

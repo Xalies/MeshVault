@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -12,9 +13,11 @@ interface ModelDao {
     @Query("SELECT * FROM folders ORDER BY name ASC")
     fun getAllFolders(): Flow<List<FolderEntity>>
 
-
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertFolder(folder: FolderEntity)
+
+    @Update
+    suspend fun updateFolder(folder: FolderEntity)
 
     @Query("DELETE FROM folders WHERE name = :folderName")
     suspend fun deleteFolder(folderName: String)
@@ -37,4 +40,11 @@ interface ModelDao {
 
     @Query("DELETE FROM models WHERE folderName = :folderName")
     suspend fun deleteModelsInFolder(folderName: String)
+
+    // --- BACKUP OPERATIONS ---
+    @Query("SELECT * FROM models WHERE googleDriveId IS NULL")
+    suspend fun getPendingUploads(): List<ModelEntity>
+
+    @Query("UPDATE models SET googleDriveId = :driveId WHERE id = :modelId")
+    suspend fun markAsUploaded(modelId: Int, driveId: String)
 }

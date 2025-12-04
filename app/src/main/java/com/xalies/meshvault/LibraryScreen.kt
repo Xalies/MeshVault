@@ -2,33 +2,33 @@ package com.xalies.meshvault
 
 import android.os.Environment
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.CreateNewFolder
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Wifi
-import androidx.compose.material.icons.filled.WifiOff
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.zIndex
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
 import com.google.android.gms.ads.AdRequest
@@ -36,7 +36,29 @@ import com.google.android.gms.ads.AdSize
 import com.google.android.gms.ads.AdView
 import java.io.File
 
-@OptIn(ExperimentalMaterial3Api::class)
+// --- 1. PRESETS ---
+val FOLDER_COLORS = listOf(
+    0xFF49454F, // Default Grey
+    0xFFB71C1C, // Red
+    0xFF0D47A1, // Blue
+    0xFF1B5E20, // Green
+    0xFFE65100, // Orange
+    0xFF4A148C, // Purple
+    0xFF006064  // Cyan
+)
+
+val FOLDER_ICONS = mapOf(
+    "Folder" to Icons.Default.Folder,
+    "Star" to Icons.Default.Star,
+    "Home" to Icons.Default.Home,
+    "Work" to Icons.Default.Work,
+    "Face" to Icons.Default.Face,
+    "Build" to Icons.Default.Build,
+    "Shop" to Icons.Default.ShoppingCart,
+    "Game" to Icons.Default.Gamepad
+)
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun LibraryScreen(onItemClick: (String) -> Unit) {
     val context = LocalContext.current
@@ -44,29 +66,39 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
     val dao = database.modelDao()
     val scope = rememberCoroutineScope()
 
+    // Navigation State
     var currentFolder by remember { mutableStateOf<String?>(null) }
+
+    // Dialog States
     var showCreateFolderDialog by remember { mutableStateOf(false) }
+    var showEditDialog by remember { mutableStateOf(false) }
+    var folderToEdit by remember { mutableStateOf<FolderEntity?>(null) }
+    var folderToDelete by remember { mutableStateOf<String?>(null) }
+    var showDeleteWarning by remember { mutableStateOf(false) }
 
     // Server States
     var isServerRunning by remember { mutableStateOf(false) }
     var serverIp by remember { mutableStateOf("") }
 
+    // Server Instance
     val wifiServer = remember { WifiServer(dao) }
 
-    var folderToDelete by remember { mutableStateOf<String?>(null) }
-    var showDeleteWarning by remember { mutableStateOf(false) }
-
+    // Data Loading
     val allFolders by dao.getAllFolders().collectAsState(initial = emptyList())
 
+    // Filter folders based on view hierarchy
     val visibleFolders = remember(allFolders, currentFolder) {
         if (currentFolder == null) {
+            // Root view: Show folders that have NO slashes
             allFolders.filter { !it.name.contains("/") }
         } else {
+            // Inside folder: Show folders that start with "currentFolder/" but no extra slashes
             val prefix = "$currentFolder/"
             allFolders.filter { it.name.startsWith(prefix) && !it.name.substringAfter(prefix).contains("/") }
         }
     }
 
+    // Back Button Logic for Subfolders
     BackHandler(enabled = currentFolder != null) {
         if (currentFolder!!.contains("/")) {
             currentFolder = currentFolder!!.substringBeforeLast("/")
@@ -75,16 +107,13 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
         }
     }
 
+    // Cleanup Server on Exit
     DisposableEffect(Unit) {
-        onDispose {
-            if (wifiServer.isAlive) {
-                wifiServer.stop()
-            }
-        }
+        onDispose { if (wifiServer.isAlive) wifiServer.stop() }
     }
 
+    // --- MAIN UI ---
     Column(modifier = Modifier.fillMaxSize()) {
-
         Box(modifier = Modifier.weight(1f)) {
             Scaffold(
                 topBar = {
@@ -95,18 +124,13 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
                         navigationIcon = {
                             if (currentFolder != null) {
                                 IconButton(onClick = {
-                                    if (currentFolder!!.contains("/")) {
-                                        currentFolder = currentFolder!!.substringBeforeLast("/")
-                                    } else {
-                                        currentFolder = null
-                                    }
-                                }) {
-                                    Icon(Icons.Default.ArrowBack, "Back")
-                                }
+                                    if (currentFolder!!.contains("/")) currentFolder = currentFolder!!.substringBeforeLast("/")
+                                    else currentFolder = null
+                                }) { Icon(Icons.Default.ArrowBack, "Back") }
                             }
                         },
                         actions = {
-                            // MOVED: Wifi Toggle is now always visible
+                            // WiFi Button (Always visible)
                             IconButton(onClick = {
                                 if (isServerRunning) {
                                     wifiServer.stop()
@@ -116,14 +140,12 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
                                         wifiServer.start()
                                         serverIp = getLocalIpAddress()
                                         isServerRunning = true
-                                    } catch (e: Exception) {
-                                        e.printStackTrace()
-                                    }
+                                    } catch (e: Exception) { e.printStackTrace() }
                                 }
                             }) {
                                 Icon(
                                     if (isServerRunning) Icons.Default.Wifi else Icons.Default.WifiOff,
-                                    contentDescription = "Export to PC",
+                                    "PC Export",
                                     tint = if (isServerRunning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                 )
                             }
@@ -139,13 +161,10 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
 
                 Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
 
+                    // 1. Server Info Banner
                     if (isServerRunning) {
                         Card(
-                            modifier = Modifier
-                                .align(Alignment.TopCenter)
-                                .padding(16.dp)
-                                .fillMaxWidth()
-                                .zIndex(1f),
+                            modifier = Modifier.align(Alignment.TopCenter).padding(16.dp).fillMaxWidth().zIndex(1f),
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
@@ -155,10 +174,11 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
                         }
                     }
 
+                    // 2. Main List Content
                     Column(modifier = Modifier.fillMaxSize()) {
                         val topPad = if (isServerRunning) 140.dp else 0.dp
 
-                        // A. Folders
+                        // A. FOLDERS GRID
                         if (visibleFolders.isNotEmpty()) {
                             LazyVerticalGrid(
                                 columns = GridCells.Fixed(2),
@@ -168,10 +188,13 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
                                 modifier = Modifier.weight(1f, fill = false)
                             ) {
                                 items(visibleFolders) { folder ->
-                                    val displayName = folder.name.substringAfterLast("/")
-                                    FolderCard(
-                                        name = displayName,
+                                    ColorfulFolderCard(
+                                        folder = folder,
                                         onClick = { currentFolder = folder.name },
+                                        onLongClick = {
+                                            folderToEdit = folder
+                                            showEditDialog = true
+                                        },
                                         onDelete = {
                                             scope.launch {
                                                 val count = dao.getModelCount(folder.name)
@@ -188,7 +211,7 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
                             }
                         }
 
-                        // B. Models
+                        // B. MODELS LIST
                         if (currentFolder != null) {
                             val models by dao.getModelsInFolder(currentFolder!!).collectAsState(initial = emptyList())
 
@@ -196,7 +219,7 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
                                 Text(
                                     "Models",
                                     style = MaterialTheme.typography.titleSmall,
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                    modifier = Modifier.padding(16.dp),
                                     color = MaterialTheme.colorScheme.primary
                                 )
                                 LazyColumn(
@@ -205,7 +228,6 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
                                     modifier = Modifier.weight(1f)
                                 ) {
                                     items(models) { model ->
-                                        // Pass the pageUrl to the click handler
                                         ModelCardWithImage(
                                             model = model,
                                             onClick = { onItemClick(model.pageUrl) },
@@ -224,20 +246,22 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
             }
         }
 
+        // 3. BANNER AD (Fixed at bottom)
         AndroidView(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp),
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             factory = { context ->
                 AdView(context).apply {
-                    setAdSize(AdSize.BANNER)
-                    setAdUnitId("ca-app-pub-9083635854272688/1452548007")
+                    setAdSize(AdSize.BANNER);
+                    setAdUnitId("ca-app-pub-9083635854272688/1452548007");
                     loadAd(AdRequest.Builder().build())
                 }
             }
         )
     }
 
+    // --- DIALOGS ---
+
+    // 1. CREATE FOLDER
     if (showCreateFolderDialog) {
         var newFolderName by remember { mutableStateOf("") }
         AlertDialog(
@@ -257,11 +281,71 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
         )
     }
 
+    // 2. EDIT FOLDER
+    if (showEditDialog && folderToEdit != null) {
+        val folder = folderToEdit!!
+        var selectedColor by remember { mutableLongStateOf(folder.color) } // Fixed: Use mutableLongStateOf for Color Longs
+        var selectedIcon by remember { mutableStateOf(folder.iconName) }
+
+        AlertDialog(
+            onDismissRequest = { showEditDialog = false },
+            title = { Text("Edit '${folder.name.substringAfterLast("/")}'") },
+            text = {
+                Column {
+                    Text("Select Color", style = MaterialTheme.typography.labelMedium)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        FOLDER_COLORS.forEach { colorVal ->
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(colorVal))
+                                    .border(if (selectedColor == colorVal) 2.dp else 0.dp, Color.White, CircleShape)
+                                    .clickable { selectedColor = colorVal }
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("Select Icon", style = MaterialTheme.typography.labelMedium)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LazyVerticalGrid(columns = GridCells.Adaptive(40.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(FOLDER_ICONS.keys.toList()) { iconName ->
+                            val icon = FOLDER_ICONS[iconName]!!
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (selectedIcon == iconName) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
+                                    .clickable { selectedIcon = iconName },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(icon, null, tint = MaterialTheme.colorScheme.onSurface)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch {
+                        val updated = folder.copy(color = selectedColor, iconName = selectedIcon)
+                        dao.updateFolder(updated)
+                        showEditDialog = false
+                    }
+                }) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { showEditDialog = false }) { Text("Cancel") } }
+        )
+    }
+
+    // 3. DELETE WARNING
     if (showDeleteWarning && folderToDelete != null) {
         AlertDialog(
             onDismissRequest = { showDeleteWarning = false },
             title = { Text("Delete Folder?") },
-            text = { Text("The folder '$folderToDelete' contains items. Deleting it will remove all contents.") },
+            text = { Text("Deleting this folder will remove all files inside.") },
             confirmButton = {
                 Button(onClick = {
                     scope.launch {
@@ -276,49 +360,73 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
     }
 }
 
-// --- CARD COMPONENTS ---
-
+// --- COMPONENT: COLORFUL FOLDER CARD ---
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun FolderCard(name: String, onClick: () -> Unit, onDelete: () -> Unit) {
+fun ColorfulFolderCard(
+    folder: FolderEntity,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val displayName = folder.name.substringAfterLast("/")
+    val icon = FOLDER_ICONS[folder.iconName] ?: Icons.Default.Folder
+
+    // Ensure we convert the Long color back to a Color object
+    // If color is 0 (default/legacy), use Grey
+    val cardColor = if (folder.color == 0L) Color(0xFF49454F) else Color(folder.color)
+    val contentColor = Color.White
+
     Card(
-        modifier = Modifier.fillMaxWidth().height(120.dp).clickable { onClick() },
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(120.dp)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            ),
+        colors = CardDefaults.cardColors(
+            containerColor = cardColor,
+            contentColor = contentColor
+        )
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            Column(modifier = Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Default.Folder, null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
-                Text(name, fontWeight = FontWeight.Bold)
+            Column(
+                modifier = Modifier.align(Alignment.Center),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(icon, null, modifier = Modifier.size(48.dp))
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(displayName, fontWeight = FontWeight.Bold)
             }
-            IconButton(onClick = onDelete, modifier = Modifier.align(Alignment.TopEnd)) {
-                Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+            IconButton(
+                onClick = onDelete,
+                modifier = Modifier.align(Alignment.TopEnd)
+            ) {
+                Icon(Icons.Default.Delete, null, tint = contentColor.copy(alpha = 0.7f))
             }
         }
     }
 }
 
+// --- COMPONENT: MODEL CARD WITH IMAGE ---
 @Composable
 fun ModelCardWithImage(model: ModelEntity, onClick: () -> Unit, onDelete: () -> Unit) {
-    // FIX: Resolve path for display
-    // If it's http, use it. If not, build absolute path.
+    // Resolve Image Path: Check if it's a URL or a Local File
     val imagePath = if (model.thumbnailUrl?.startsWith("http") == true) {
         model.thumbnailUrl
     } else if (!model.thumbnailUrl.isNullOrEmpty()) {
         File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "MeshVault/${model.thumbnailUrl}")
-    } else {
-        null
-    }
+    } else { null }
 
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(100.dp)
-            .clickable { onClick() }, // CLICK HANDLER
+        modifier = Modifier.fillMaxWidth().height(100.dp).clickable { onClick() },
         elevation = CardDefaults.cardElevation(2.dp)
     ) {
         Row(modifier = Modifier.fillMaxSize()) {
             if (imagePath != null) {
                 AsyncImage(
-                    model = imagePath, // Passing the File object or URL
+                    model = imagePath,
                     contentDescription = null,
                     modifier = Modifier.width(100.dp).fillMaxHeight().background(Color.Gray),
                     contentScale = ContentScale.Crop

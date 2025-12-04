@@ -13,6 +13,9 @@ interface ModelDao {
     @Query("SELECT * FROM folders ORDER BY name ASC")
     fun getAllFolders(): Flow<List<FolderEntity>>
 
+    @Query("SELECT * FROM folders ORDER BY name ASC")
+    suspend fun getAllFoldersList(): List<FolderEntity>
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertFolder(folder: FolderEntity)
 

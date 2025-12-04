@@ -88,6 +88,7 @@ class WifiServer(private val dao: ModelDao) {
                 }
 
                 val rootDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "MeshVault")
+                val folderNames = syncFolders(rootDir)
 
                 if (method == "GET") {
                     if (path.startsWith("/zip/")) {
@@ -100,8 +101,8 @@ class WifiServer(private val dao: ModelDao) {
                         } else {
                             send404(output)
                         }
-                    } else if (path == "/" || path == "/index.html") {
-                        sendDashboard(output, rootDir, null)
+                    } else if (path == "/" || path == "/index.html") { 
+                        sendDashboard(output, rootDir, null, folderNames)
                     } else {
                         // Folder navigation or File Download
                         val cleanPath = path.removePrefix("/")
@@ -109,7 +110,8 @@ class WifiServer(private val dao: ModelDao) {
 
                         if (target.exists()) {
                             if (target.isDirectory) {
-                                sendDashboard(output, rootDir, target)
+                                val foldersForView = if (folderNames.contains(cleanPath)) folderNames else folderNames + cleanPath
+                                sendDashboard(output, rootDir, cleanPath, foldersForView)
                             } else {
                                 sendFile(output, target)
                             }
@@ -158,29 +160,22 @@ class WifiServer(private val dao: ModelDao) {
         }.start()
     }
 
-    private fun sendDashboard(output: PrintStream, rootDir: File, currentDir: File?) {
-        // Sync Logic: Get ALL folders from DB to build the navigation tree
-        // Note: getAllFolders returns a Flow, which is hard to consume synchronously here without blocking.
-        // Ideally, we'd add a suspend function to DAO "getFolderList()" that returns List<FolderEntity>
-        // For now, we will rely on file system scanning but filtering against known DB entries if possible
-        // OR, just accept that the server shows what is on DISK.
+    private fun sendDashboard(output: PrintStream, rootDir: File, currentPath: String?, folderNames: List<String>) {
+        val availableFolders = if (folderNames.isNotEmpty()) folderNames else rootDir.walkTopDown()
+            .drop(1)
+            .filter { it.isDirectory }
+            .map { it.relativeTo(rootDir).path }
+            .toList()
+            .sorted()
 
-        // However, to fix your specific issue "old folders showing", we MUST check the DB.
-        // We will assume you added `getAllFoldersList()` to DAO or we will scan and filter.
-        // Since we don't have that method in DAO yet, let's filter the disk folders.
-        // Wait, the previous turn added `getModelsInFolderList` but not `getFoldersList`.
+        val activeFolderPath = when {
+            currentPath != null && availableFolders.contains(currentPath) -> currentPath
+            availableFolders.isNotEmpty() -> availableFolders.first()
+            else -> null
+        }
 
-        // Best approach without changing DAO again:
-        // We will just scan disk for now as it's robust. If you want strict sync,
-        // you MUST delete the physical folders of the old installation from your phone manually using a File Manager.
-        // The app's "uninstall" does NOT delete the "Downloads/MeshVault" folder to protect user data.
-
-        // Let's proceed with File System scanning which is standard behavior for file servers.
-        // To hide "old" folders, you should delete them via the App (if they show up) or File Manager.
-
-        val allDiskFolders = rootDir.listFiles()?.filter { it.isDirectory }?.sortedBy { it.name } ?: emptyList()
-        val actualCurrentDir = currentDir ?: (allDiskFolders.firstOrNull() ?: rootDir)
-        val relativePath = if (actualCurrentDir == rootDir) "" else actualCurrentDir.name
+        val relativePath = activeFolderPath ?: ""
+        val activeFolderDir = activeFolderPath?.let { File(rootDir, it) }
 
         val sb = StringBuilder()
         sb.append("HTTP/1.1 200 OK\r\n")
@@ -258,11 +253,11 @@ class WifiServer(private val dao: ModelDao) {
         sb.append("<div class='app-title'>MESH VAULT</div>")
         sb.append("<ul class='nav-list'>")
 
-        // Navigation: List all folders found on disk
-        allDiskFolders.forEach { folder ->
-            val isActive = folder.name == actualCurrentDir.name
+        // Navigation: List all folders stored in the database (and synced to disk)
+        availableFolders.forEach { folderPath ->
+            val isActive = folderPath == activeFolderPath
             val activeClass = if (isActive) "active" else ""
-            sb.append("<li class='nav-item $activeClass' onclick=\"location.href='/${folder.name}'\">📂 ${folder.name}</li>")
+            sb.append("<li class='nav-item $activeClass' onclick=\"location.href='/$folderPath'\">📂 $folderPath</li>")
         }
         sb.append("</ul>")
         sb.append("</nav>")
@@ -273,8 +268,9 @@ class WifiServer(private val dao: ModelDao) {
 
         sb.append("<div class='main-header'>")
         sb.append("<div>")
-        sb.append("<div class='breadcrumbs'>Library / ${actualCurrentDir.name}</div>")
-        sb.append("<h2>${actualCurrentDir.name}</h2>")
+        val folderLabel = activeFolderPath ?: "Vault"
+        sb.append("<div class='breadcrumbs'>Library / $folderLabel</div>")
+        sb.append("<h2>$folderLabel</h2>")
         sb.append("</div>")
 
         // Header Controls
@@ -290,48 +286,53 @@ class WifiServer(private val dao: ModelDao) {
 
         sb.append("<div class='grid-container'><div class='grid'>")
 
-        // SYNC LOGIC:
-        // 1. Get models from DB for this folder
-        val dbModels = runBlocking { dao.getModelsInFolderList(actualCurrentDir.name) }
-
-        // 2. Only show files that are IN THE DB (ignore random files on disk not in vault)
-        // AND ensure they actually exist on disk
-        val validModels = dbModels.filter { model ->
-            val file = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), model.localFilePath)
-            file.exists() && file.isFile
-        }
-
-        if (validModels.isEmpty()) {
-            sb.append("<div style='grid-column: 1/-1; text-align:center; color:#666; margin-top:50px;'>No vault items in this folder.</div>")
+        if (activeFolderPath == null) {
+            sb.append("<div style='grid-column: 1/-1; text-align:center; color:#666; margin-top:50px;'>No folders available.</div>")
         } else {
-            validModels.forEach { model ->
-                // File name is last part of local path
-                val fileName = model.localFilePath.substringAfterLast("/")
+            // SYNC LOGIC:
+            // 1. Get models from DB for this folder
+            val dbModels = runBlocking { dao.getModelsInFolderList(activeFolderPath) }
+
+            // 2. Only show files that are IN THE DB (ignore random files on disk not in vault)
+            // AND ensure they actually exist on disk
+            val validModels = dbModels.filter { model ->
                 val file = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), model.localFilePath)
+                file.exists() && file.isFile
+            }
 
-                val dlLink = "/${actualCurrentDir.name}/$fileName"
-                val srcUrl = model.pageUrl
-                var imgUrl = model.thumbnailUrl ?: ""
+            if (validModels.isEmpty()) {
+                sb.append("<div style='grid-column: 1/-1; text-align:center; color:#666; margin-top:50px;'>No vault items in this folder.</div>")
+            } else {
+                val folderPrefix = if (relativePath.isNotEmpty()) "/$relativePath" else ""
+                validModels.forEach { model ->
+                    // File name is last part of local path
+                    val fileName = model.localFilePath.substringAfterLast("/")
+                    val file = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), model.localFilePath)
 
-                if (imgUrl.isNotEmpty() && !imgUrl.startsWith("http")) {
-                    if (!imgUrl.startsWith("/")) imgUrl = "/$imgUrl"
+                    val dlLink = "$folderPrefix/$fileName"
+                    val srcUrl = model.pageUrl
+                    var imgUrl = model.thumbnailUrl ?: ""
+
+                    if (imgUrl.isNotEmpty() && !imgUrl.startsWith("http")) {
+                        if (!imgUrl.startsWith("/")) imgUrl = "/$imgUrl"
+                    }
+
+                    val sizeStr = String.format("%.2f MB", file.length() / 1024.0 / 1024.0)
+
+                    sb.append("<div class='card' onclick=\"selectModel('$fileName', '$sizeStr', '$dlLink', '$srcUrl', '$imgUrl')\">")
+                    // Value needs to match how the POST handler expects it (relative to root)
+                    val zipValue = if (relativePath.isNotEmpty()) "$relativePath/$fileName" else fileName
+                    sb.append("<input type='checkbox' name='files' value='$zipValue' class='checkbox-overlay' onclick='event.stopPropagation()'>")
+
+                    if (imgUrl.isNotEmpty()) {
+                        sb.append("<img src='$imgUrl' class='card-thumb' onerror=\"this.style.opacity='0.3'\">")
+                    } else {
+                        sb.append("<div class='card-thumb' style='display:flex;align-items:center;justify-content:center;color:#333;'>No Preview</div>")
+                    }
+                    sb.append("<div class='card-body'>")
+                    sb.append("<div class='card-title'>$fileName</div>")
+                    sb.append("</div></div>")
                 }
-
-                val sizeStr = String.format("%.2f MB", file.length() / 1024.0 / 1024.0)
-
-                sb.append("<div class='card' onclick=\"selectModel('$fileName', '$sizeStr', '$dlLink', '$srcUrl', '$imgUrl')\">")
-                // Value needs to match how the POST handler expects it (relative to root)
-                val zipValue = "${actualCurrentDir.name}/$fileName"
-                sb.append("<input type='checkbox' name='files' value='$zipValue' class='checkbox-overlay' onclick='event.stopPropagation()'>")
-
-                if (imgUrl.isNotEmpty()) {
-                    sb.append("<img src='$imgUrl' class='card-thumb' onerror=\"this.style.opacity='0.3'\">")
-                } else {
-                    sb.append("<div class='card-thumb' style='display:flex;align-items:center;justify-content:center;color:#333;'>No Preview</div>")
-                }
-                sb.append("<div class='card-body'>")
-                sb.append("<div class='card-title'>$fileName</div>")
-                sb.append("</div></div>")
             }
         }
 
@@ -352,6 +353,24 @@ class WifiServer(private val dao: ModelDao) {
 
         sb.append("</body></html>")
         output.print(sb.toString())
+    }
+
+    private fun syncFolders(rootDir: File): List<String> {
+        val foldersFromDb = runBlocking { dao.getAllFoldersList() }
+        val syncedNames = foldersFromDb.map { folder ->
+            File(rootDir, folder.name).apply { if (!exists()) mkdirs() }
+            folder.name
+        }
+
+        if (syncedNames.isNotEmpty()) return syncedNames.sorted()
+
+        // Fallback to disk scan if database has no folders yet
+        return rootDir.walkTopDown()
+            .drop(1)
+            .filter { it.isDirectory }
+            .map { it.relativeTo(rootDir).path }
+            .toList()
+            .sorted()
     }
 
     private fun sendZip(output: PrintStream, targets: List<File>, zipName: String, baseDir: File?) {

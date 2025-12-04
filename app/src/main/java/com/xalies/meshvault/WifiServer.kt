@@ -311,28 +311,7 @@ class WifiServer(private val dao: ModelDao) {
             file.exists() && file.isFile
         }
 
-        val immediateSubfolders = allFolders
-            .map { it.name }
-            .filter { folderName ->
-                if (relativePath.isEmpty()) {
-                    !folderName.contains("/")
-                } else {
-                    folderName.startsWith("$relativePath/") && !folderName.removePrefix("$relativePath/").contains("/")
-                }
-            }
-            .sorted()
-
-        immediateSubfolders.forEach { folderName ->
-            val encodedPath = encodePath(folderName)
-            sb.append("<div class='card' onclick=\"location.href='/${encodedPath}'\" style='border-color:#444;'>")
-            sb.append("<div class='card-thumb' style='display:flex;align-items:center;justify-content:center;color:#bb86fc;font-size:2rem;'>📂</div>")
-            sb.append("<div class='card-body'>")
-            sb.append("<div class='card-title'>$folderName</div>")
-            sb.append("<div class='card-meta'>Folder</div>")
-            sb.append("</div></div>")
-        }
-
-        if (validModels.isEmpty() && immediateSubfolders.isEmpty()) {
+        if (validModels.isEmpty()) {
             val emptyText = if (showAllModels) "No models available." else "No vault items in this folder."
             sb.append("<div style='grid-column: 1/-1; text-align:center; color:#666; margin-top:50px;'>$emptyText</div>")
         } else {

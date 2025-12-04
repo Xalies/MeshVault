@@ -38,7 +38,9 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import coil.compose.AsyncImage
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.AdSize
 import com.google.android.gms.ads.AdView
@@ -88,6 +90,7 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
     var showEditDialog by remember { mutableStateOf(false) }
     var folderToEdit by remember { mutableStateOf<FolderEntity?>(null) }
     var folderToDelete by remember { mutableStateOf<String?>(null) }
+    var folderDeleteCount by remember { mutableStateOf<Int?>(null) }
     var showDeleteWarning by remember { mutableStateOf(false) }
 
     // Server States
@@ -277,12 +280,13 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
                                         },
                                         onDelete = {
                                             scope.launch {
-                                                val count = dao.getModelCount(folder.name)
+                                                val count = dao.getModelCountInHierarchy(folder.name, "${folder.name}/%")
                                                 if (count > 0) {
                                                     folderToDelete = folder.name
+                                                    folderDeleteCount = count
                                                     showDeleteWarning = true
                                                 } else {
-                                                    dao.deleteFolder(folder.name)
+                                                    deleteFolderAndContents(dao, folder.name)
                                                 }
                                             }
                                         }
@@ -311,7 +315,7 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
                                         ModelCardWithImage(
                                             model = model,
                                             onClick = { onItemClick(model.pageUrl) },
-                                            onDelete = { scope.launch { dao.deleteModel(model.id) } }
+                                            onDelete = { scope.launch { deleteModelAndFiles(dao, model) } }
                                         )
                                     }
                                 }
@@ -471,20 +475,90 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
     // 3. DELETE WARNING
     if (showDeleteWarning && folderToDelete != null) {
         AlertDialog(
-            onDismissRequest = { showDeleteWarning = false },
+            onDismissRequest = {
+                showDeleteWarning = false
+                folderToDelete = null
+                folderDeleteCount = null
+            },
             title = { Text("Delete Folder?") },
-            text = { Text("Deleting this folder will remove all files inside.") },
+            text = {
+                val countText = folderDeleteCount?.let { "$it file${if (it == 1) "" else "s"} (excluding thumbnails)" }
+                    ?: "files"
+                Text("This folder contains $countText. Deleting will remove them from your phone, including items in subfolders.")
+            },
             confirmButton = {
                 Button(onClick = {
                     scope.launch {
-                        folderToDelete?.let { dao.deleteModelsInFolder(it); dao.deleteFolder(it) }
+                        folderToDelete?.let { deleteFolderAndContents(dao, it) }
                         showDeleteWarning = false
+                        folderDeleteCount = null
                         folderToDelete = null
                     }
                 }) { Text("Delete") }
             },
-            dismissButton = { TextButton(onClick = { showDeleteWarning = false }) { Text("Cancel") } }
+            dismissButton = {
+                TextButton(onClick = {
+                    showDeleteWarning = false
+                    folderToDelete = null
+                    folderDeleteCount = null
+                }) { Text("Cancel") }
+            }
         )
+    }
+}
+
+private suspend fun deleteFolderAndContents(dao: ModelDao, folderName: String) {
+    val folderPrefix = "$folderName/%"
+
+    withContext(Dispatchers.IO) {
+        val models = dao.getModelsInHierarchy(folderName, folderPrefix)
+
+        models.forEach { model ->
+            deleteFileIfExists(File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), model.localFilePath))
+
+            if (!model.thumbnailUrl.isNullOrBlank() && model.thumbnailUrl?.startsWith("http") == false) {
+                deleteFileIfExists(
+                    File(
+                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                        "MeshVault/${model.thumbnailUrl}"
+                    )
+                )
+            }
+        }
+
+        dao.deleteModelsInHierarchy(folderName, folderPrefix)
+        dao.deleteFolderHierarchy(folderName, folderPrefix)
+
+        val folderDir = File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            "MeshVault/$folderName"
+        )
+        if (folderDir.exists()) {
+            folderDir.deleteRecursively()
+        }
+    }
+}
+
+private suspend fun deleteModelAndFiles(dao: ModelDao, model: ModelEntity) {
+    withContext(Dispatchers.IO) {
+        deleteFileIfExists(File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), model.localFilePath))
+
+        if (!model.thumbnailUrl.isNullOrBlank() && model.thumbnailUrl?.startsWith("http") == false) {
+            deleteFileIfExists(
+                File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                    "MeshVault/${model.thumbnailUrl}"
+                )
+            )
+        }
+
+        dao.deleteModel(model.id)
+    }
+}
+
+private fun deleteFileIfExists(file: File) {
+    if (file.exists()) {
+        file.delete()
     }
 }
 

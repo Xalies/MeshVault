@@ -39,7 +39,10 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -196,19 +199,32 @@ fun BrowserScreen(webView: WebView) {
                     Spacer(modifier = Modifier.height(16.dp))
 
                     if (showNewFolderInput) {
+                        val createFolder: () -> Unit = {
+                            val folderName = newFolderName.trim()
+                            if (folderName.isNotBlank()) {
+                                scope.launch {
+                                    dao.insertFolder(
+                                        FolderEntity(
+                                            folderName,
+                                            color = FOLDER_COLORS.random(),
+                                            iconName = "Folder"
+                                        )
+                                    )
+                                    newFolderName = ""
+                                    showNewFolderInput = false
+                                }
+                            }
+                        }
+
                         OutlinedTextField(
-                            value = newFolderName, onValueChange = { newFolderName = it },
+                            value = newFolderName,
+                            onValueChange = { newFolderName = it },
                             label = { Text("New Folder Name") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(onDone = { createFolder() }),
                             trailingIcon = {
-                                IconButton(onClick = {
-                                    if (newFolderName.isNotBlank()) {
-                                        scope.launch {
-                                            dao.insertFolder(FolderEntity(newFolderName, color = 0xFF49454F, iconName = "Folder"))
-                                        }
-                                        newFolderName = ""
-                                        showNewFolderInput = false
-                                    }
-                                }) { Icon(Icons.Default.Add, "Create") }
+                                IconButton(onClick = { createFolder() }) { Icon(Icons.Default.Add, "Create") }
                             }
                         )
                     } else {
@@ -309,7 +325,7 @@ fun BrowserScreen(webView: WebView) {
                         val newPath = "${targetParentFolder!!.name}/$subfolderName"
                         scope.launch {
                             // Inherit color/icon or use default
-                            dao.insertFolder(FolderEntity(newPath, color = 0xFF49454F, iconName = "Folder"))
+                            dao.insertFolder(FolderEntity(newPath, color = FOLDER_COLORS.random(), iconName = "Folder"))
                         }
                         showSubfolderDialog = false
                     }

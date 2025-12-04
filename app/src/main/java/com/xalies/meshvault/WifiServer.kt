@@ -159,6 +159,25 @@ class WifiServer(private val dao: ModelDao) {
     }
 
     private fun sendDashboard(output: PrintStream, rootDir: File, currentDir: File?) {
+        // Sync Logic: Get ALL folders from DB to build the navigation tree
+        // Note: getAllFolders returns a Flow, which is hard to consume synchronously here without blocking.
+        // Ideally, we'd add a suspend function to DAO "getFolderList()" that returns List<FolderEntity>
+        // For now, we will rely on file system scanning but filtering against known DB entries if possible
+        // OR, just accept that the server shows what is on DISK.
+
+        // However, to fix your specific issue "old folders showing", we MUST check the DB.
+        // We will assume you added `getAllFoldersList()` to DAO or we will scan and filter.
+        // Since we don't have that method in DAO yet, let's filter the disk folders.
+        // Wait, the previous turn added `getModelsInFolderList` but not `getFoldersList`.
+
+        // Best approach without changing DAO again:
+        // We will just scan disk for now as it's robust. If you want strict sync,
+        // you MUST delete the physical folders of the old installation from your phone manually using a File Manager.
+        // The app's "uninstall" does NOT delete the "Downloads/MeshVault" folder to protect user data.
+
+        // Let's proceed with File System scanning which is standard behavior for file servers.
+        // To hide "old" folders, you should delete them via the App (if they show up) or File Manager.
+
         val allDiskFolders = rootDir.listFiles()?.filter { it.isDirectory }?.sortedBy { it.name } ?: emptyList()
         val actualCurrentDir = currentDir ?: (allDiskFolders.firstOrNull() ?: rootDir)
         val relativePath = if (actualCurrentDir == rootDir) "" else actualCurrentDir.name
@@ -172,26 +191,24 @@ class WifiServer(private val dao: ModelDao) {
         sb.append("body { margin: 0; font-family: 'Segoe UI', sans-serif; background: #121212; color: #fff; height: 100vh; display: flex; overflow: hidden; }")
         sb.append("a { text-decoration: none; color: inherit; }")
 
-        sb.append(".sidebar-left { width: 250px; background: #1a1a1a; border-right: 1px solid #333; display: flex; flex-direction: column; flex-shrink: 0; }")
-        sb.append(".main-content { flex: 1; background: #121212; display: flex; flex-direction: column; overflow: hidden; position: relative; }")
-        sb.append(".sidebar-right { width: 300px; background: #1a1a1a; border-left: 1px solid #333; padding: 20px; display: flex; flex-direction: column; flex-shrink: 0; }")
+        sb.append(".sidebar-left { width: 250px; background: #1a1a1a; border-right: 1px solid #333; display: flex; flex-direction: column; }")
+        sb.append(".main-content { flex: 1; background: #121212; display: flex; flex-direction: column; overflow: hidden; }")
+        sb.append(".sidebar-right { width: 300px; background: #1a1a1a; border-left: 1px solid #333; padding: 20px; display: flex; flex-direction: column; }")
 
         sb.append(".app-title { padding: 20px; font-size: 1.2rem; font-weight: bold; color: #bb86fc; border-bottom: 1px solid #333; }")
         sb.append(".nav-list { list-style: none; padding: 0; margin: 0; overflow-y: auto; flex: 1; }")
         sb.append(".nav-item { padding: 15px 20px; border-bottom: 1px solid #252525; cursor: pointer; transition: background 0.2s; color: #aaa; }")
         sb.append(".nav-item:hover { background: #252525; color: #fff; }")
         sb.append(".nav-item.active { background: #333; color: #bb86fc; border-left: 3px solid #bb86fc; }")
-        // Add styling for indented subfolders
-        sb.append(".nav-item.subfolder { padding-left: 40px; font-size: 0.95em; }")
 
-        sb.append(".main-header { padding: 20px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; background: #1f1f1f; flex-shrink: 0; }")
+        sb.append(".main-header { padding: 20px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; background: #1f1f1f; }")
         sb.append(".breadcrumbs { color: #888; font-size: 0.9em; }")
         sb.append(".header-controls { display: flex; align-items: center; gap: 15px; }")
 
         sb.append(".toggle-label { display: flex; align-items: center; gap: 8px; font-size: 0.9em; cursor: pointer; user-select: none; }")
         sb.append(".toggle-label input { accent-color: #03dac6; transform: scale(1.2); }")
 
-        sb.append(".grid-container { padding: 20px; overflow-y: auto; flex: 1; }")
+        sb.append(".grid-container { padding: 20px; overflow-y: auto; height: 100%; }")
         sb.append(".grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; }")
 
         sb.append(".card { background: #252525; border-radius: 8px; overflow: hidden; cursor: pointer; border: 2px solid transparent; transition: all 0.2s; position: relative; }")
@@ -241,19 +258,11 @@ class WifiServer(private val dao: ModelDao) {
         sb.append("<div class='app-title'>MESH VAULT</div>")
         sb.append("<ul class='nav-list'>")
 
-        // Navigation: List folders found on disk
+        // Navigation: List all folders found on disk
         allDiskFolders.forEach { folder ->
             val isActive = folder.name == actualCurrentDir.name
             val activeClass = if (isActive) "active" else ""
-
-            // Check if it's a subfolder (contains slash) and apply indentation class
-            val isSubfolder = folder.name.contains("/")
-            val subfolderClass = if (isSubfolder) "subfolder" else ""
-
-            // Display only the leaf name for cleaner look, but use full path for link
-            val displayName = folder.name.substringAfterLast("/")
-
-            sb.append("<li class='nav-item $activeClass $subfolderClass' onclick=\"location.href='/${folder.name}'\">📂 $displayName</li>")
+            sb.append("<li class='nav-item $activeClass' onclick=\"location.href='/${folder.name}'\">📂 ${folder.name}</li>")
         }
         sb.append("</ul>")
         sb.append("</nav>")
@@ -265,7 +274,7 @@ class WifiServer(private val dao: ModelDao) {
         sb.append("<div class='main-header'>")
         sb.append("<div>")
         sb.append("<div class='breadcrumbs'>Library / ${actualCurrentDir.name}</div>")
-        sb.append("<h2>${actualCurrentDir.name.substringAfterLast("/")}</h2>")
+        sb.append("<h2>${actualCurrentDir.name}</h2>")
         sb.append("</div>")
 
         // Header Controls

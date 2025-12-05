@@ -3,6 +3,7 @@ package com.xalies.meshvault
 import android.content.Context
 import android.net.Uri
 import android.os.Environment
+import android.util.Base64
 import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -83,7 +84,8 @@ suspend fun resyncExistingVaultContents(
                             pageUrl = metadata?.pageUrl?.takeIf { it.isNotBlank() } ?: child.uri.toString(),
                             localFilePath = localPath,
                             folderName = folderName,
-                            thumbnailUrl = normalizeThumbnailPath(metadata?.thumbnailPath)
+                            thumbnailUrl = normalizeThumbnailPath(metadata?.thumbnailPath),
+                            thumbnailData = decodeBase64Image(metadata?.thumbnailDataBase64)
                         )
 
                         dao.insertModel(restoredModel)
@@ -150,7 +152,8 @@ suspend fun resyncExistingVaultContents(
                             pageUrl = metadata?.pageUrl?.takeIf { it.isNotBlank() } ?: file.toURI().toString(),
                             localFilePath = localPath,
                             folderName = folderName,
-                            thumbnailUrl = normalizeThumbnailPath(metadata?.thumbnailPath)
+                            thumbnailUrl = normalizeThumbnailPath(metadata?.thumbnailPath),
+                            thumbnailData = decodeBase64Image(metadata?.thumbnailDataBase64)
                         )
 
                         dao.insertModel(restoredModel)
@@ -179,4 +182,10 @@ private fun normalizeThumbnailPath(raw: String?): String? {
     }
 
     return cleaned.ifBlank { null }
+}
+
+private fun decodeBase64Image(raw: String?): ByteArray? {
+    return raw?.let {
+        runCatching { Base64.decode(it, Base64.DEFAULT) }.getOrNull()
+    }
 }

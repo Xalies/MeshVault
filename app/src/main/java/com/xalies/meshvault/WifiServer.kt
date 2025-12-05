@@ -1,6 +1,7 @@
 package com.xalies.meshvault
 
 import android.os.Environment
+import android.util.Base64
 import android.util.Log
 import kotlinx.coroutines.runBlocking
 import java.io.*
@@ -321,9 +322,11 @@ class WifiServer(private val dao: ModelDao) {
 
                 val dlLink = "/${encodePath(model.localFilePath.trimStart('/'))}"
                 val srcUrl = model.pageUrl
-                var imgUrl = model.thumbnailUrl ?: ""
+                val inlineThumb = model.thumbnailData?.let { Base64.encodeToString(it, Base64.NO_WRAP) }
 
-                if (imgUrl.isNotEmpty() && !imgUrl.startsWith("http")) {
+                var imgUrl = inlineThumb?.let { "data:image/jpeg;base64,$it" } ?: model.thumbnailUrl ?: ""
+
+                if (inlineThumb == null && imgUrl.isNotEmpty() && !imgUrl.startsWith("http")) {
                     if (!imgUrl.startsWith("/")) imgUrl = "/$imgUrl"
                 }
 

@@ -1,7 +1,10 @@
 package com.xalies.meshvault
 
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.os.Environment
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -45,9 +48,12 @@ import kotlinx.coroutines.withContext
 import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.AdSize
 import com.google.android.gms.ads.AdView
+import com.google.android.gms.ads.LoadAdError
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.Scope
+import com.google.android.gms.ads.interstitial.InterstitialAd
+import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback
 import com.google.api.services.drive.DriveScopes
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -101,6 +107,7 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
 
     // Server Instance
     val wifiServer = remember { WifiServer(dao) }
+    val activity = context.findActivity()
 
     // Data Loading
     val allFolders by dao.getAllFolders().collectAsState(initial = emptyList())
@@ -219,10 +226,32 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
                                     wifiServer.stop()
                                     isServerRunning = false
                                 } else {
+                                    Toast.makeText(
+                                        context,
+                                        "Starting server now. An ad will appear after startup.",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
                                     try {
                                         wifiServer.start()
                                         serverIp = getLocalIpAddress()
                                         isServerRunning = true
+                                        InterstitialAd.load(
+                                            context,
+                                            "ca-app-pub-9083635854272688/5217396568",
+                                            AdRequest.Builder().build(),
+                                            object : InterstitialAdLoadCallback() {
+                                                override fun onAdLoaded(ad: InterstitialAd) {
+                                                    activity?.let { ad.show(it) }
+                                                }
+
+                                                override fun onAdFailedToLoad(loadAdError: LoadAdError) {
+                                                    Log.w(
+                                                        "LibraryScreen",
+                                                        "Server start ad failed to load: ${loadAdError.message}"
+                                                    )
+                                                }
+                                            }
+                                        )
                                     } catch (e: Exception) { e.printStackTrace() }
                                 }
                             }) {
@@ -647,4 +676,13 @@ fun ModelCardWithImage(model: ModelEntity, onClick: () -> Unit, onDelete: () -> 
             }
         }
     }
+}
+
+private fun Context.findActivity(): Activity? {
+    var currentContext: Context = this
+    while (currentContext is ContextWrapper) {
+        if (currentContext is Activity) return currentContext
+        currentContext = currentContext.baseContext
+    }
+    return null
 }

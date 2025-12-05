@@ -102,6 +102,7 @@ fun BrowserScreen(webView: WebView) {
 
                     setDownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
                         val currentPage = this.url ?: ""
+                        val adjustedUrl = adjustThingiverseDownloadUrl(currentPage, url)
 
                         // --- ROBUST SCRAPER ---
                         val script = """
@@ -155,7 +156,7 @@ fun BrowserScreen(webView: WebView) {
                             val t = if (parts.isNotEmpty()) parts[0] else "Unknown"
                             val i = if (parts.size > 1) parts[1] else ""
 
-                            pendingDownload = PendingDownload(url, currentPage, userAgent, contentDisposition, mimetype, t, i)
+                            pendingDownload = PendingDownload(adjustedUrl, currentPage, userAgent, contentDisposition, mimetype, t, i)
                         }
                     }
 
@@ -365,6 +366,17 @@ fun Modifier.simpleVerticalScrollbar(
             size = Size(width.toPx(), scrollbarHeight),
             alpha = alpha
         )
+    }
+}
+
+private fun adjustThingiverseDownloadUrl(currentPage: String, originalUrl: String): String {
+    val isThingiversePage = currentPage.contains("thingiverse.com/thing:")
+    val alreadyZip = currentPage.endsWith("/zip") || originalUrl.endsWith("/zip")
+
+    return if (isThingiversePage && !alreadyZip) {
+        currentPage.trimEnd('/') + "/zip"
+    } else {
+        originalUrl
     }
 }
 

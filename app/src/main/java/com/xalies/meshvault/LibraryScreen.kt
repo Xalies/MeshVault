@@ -226,32 +226,41 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
                                     wifiServer.stop()
                                     isServerRunning = false
                                 } else {
+                                    val startCount = preferences.getInt("server_start_count", 0) + 1
+                                    preferences.edit().putInt("server_start_count", startCount).apply()
+                                    val shouldShowAd = startCount % 3 == 0
                                     Toast.makeText(
                                         context,
-                                        "Starting server now. An ad will appear after startup.",
+                                        if (shouldShowAd) {
+                                            "Starting server now. An ad will appear after startup."
+                                        } else {
+                                            "Starting server now."
+                                        },
                                         Toast.LENGTH_SHORT
                                     ).show()
                                     try {
                                         wifiServer.start()
                                         serverIp = getLocalIpAddress()
                                         isServerRunning = true
-                                        InterstitialAd.load(
-                                            context,
-                                            "ca-app-pub-9083635854272688/5217396568",
-                                            AdRequest.Builder().build(),
-                                            object : InterstitialAdLoadCallback() {
-                                                override fun onAdLoaded(ad: InterstitialAd) {
-                                                    activity?.let { ad.show(it) }
-                                                }
+                                        if (shouldShowAd) {
+                                            InterstitialAd.load(
+                                                context,
+                                                "ca-app-pub-9083635854272688/5217396568",
+                                                AdRequest.Builder().build(),
+                                                object : InterstitialAdLoadCallback() {
+                                                    override fun onAdLoaded(ad: InterstitialAd) {
+                                                        activity?.let { ad.show(it) }
+                                                    }
 
-                                                override fun onAdFailedToLoad(loadAdError: LoadAdError) {
-                                                    Log.w(
-                                                        "LibraryScreen",
-                                                        "Server start ad failed to load: ${loadAdError.message}"
-                                                    )
+                                                    override fun onAdFailedToLoad(loadAdError: LoadAdError) {
+                                                        Log.w(
+                                                            "LibraryScreen",
+                                                            "Server start ad failed to load: ${loadAdError.message}"
+                                                        )
+                                                    }
                                                 }
-                                            }
-                                        )
+                                            )
+                                        }
                                     } catch (e: Exception) { e.printStackTrace() }
                                 }
                             }) {

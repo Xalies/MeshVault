@@ -5,6 +5,7 @@ import android.app.DownloadManager
 import android.content.Context
 import android.net.Uri
 import android.os.Environment
+import android.util.Log
 import android.view.ViewGroup
 import android.webkit.URLUtil
 import android.webkit.WebChromeClient
@@ -62,6 +63,7 @@ import java.net.URL
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun BrowserScreen(webView: WebView) {
+    val logTag = "BrowserScreen"
     val context = LocalContext.current
     val database = remember { AppDatabase.getDatabase(context) }
     val dao = database.modelDao()
@@ -100,11 +102,20 @@ fun BrowserScreen(webView: WebView) {
                         override fun onProgressChanged(view: WebView?, newProgress: Int) {
                             loadProgress = newProgress / 100f
                         }
+
+                        override fun onConsoleMessage(message: android.webkit.ConsoleMessage?): Boolean {
+                            message?.let {
+                                Log.d(logTag, "[JS] ${it.message()} (${it.sourceId()}:${it.lineNumber()})")
+                            }
+                            return super.onConsoleMessage(message)
+                        }
                     }
 
                     setDownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
                         val currentPage = this.url ?: ""
                         val adjustedUrl = adjustThingiverseDownloadUrl(currentPage, url)
+
+                        Log.d(logTag, "Download requested: original=$url currentPage=$currentPage adjusted=$adjustedUrl")
 
                         // --- ROBUST SCRAPER ---
                         val script = """
@@ -168,6 +179,66 @@ fun BrowserScreen(webView: WebView) {
                             if (url.startsWith("blob:") || url.startsWith("javascript:")) return false
                             val isAllowed = ALLOWED_DOMAINS.any { url.contains(it, ignoreCase = true) }
                             return !isAllowed
+                        }
+
+                        override fun onPageFinished(view: WebView?, url: String?) {
+                            super.onPageFinished(view, url)
+
+                            if (url?.contains("thingiverse.com/thing:") != true) return
+
+                            Log.d(logTag, "Thingiverse page detected, installing download-all hook on $url")
+
+                            val script = """
+                                (function() {
+                                    const textMatches = (node) => {
+                                        if (!node) return false;
+                                        const text = (node.textContent || '').toLowerCase();
+                                        const aria = (node.getAttribute('aria-label') || '').toLowerCase();
+                                        return text.includes('download all files') || aria.includes('download all files');
+                                    };
+
+                                    const updateUrl = () => {
+                                        const pageUrl = window.location.href.split('#')[0].replace(/\/$/, '');
+                                        const normalized = pageUrl.replace(/\/files(?:\/)?$/, '');
+                                        const zipUrl = normalized.endsWith('/zip') ? normalized : normalized + '/zip';
+                                        console.log('[MeshVault] Redirecting to zip: ' + zipUrl);
+                                        window.location.href = zipUrl;
+                                    };
+
+                                    const attachListener = (element) => {
+                                        if (!element || element.dataset.meshvaultDownloadAllHooked) return;
+                                        element.dataset.meshvaultDownloadAllHooked = 'true';
+                                        element.addEventListener('click', function(event) {
+                                            event.preventDefault();
+                                            event.stopPropagation();
+                                            console.log('[MeshVault] Intercepted Download All Files click');
+                                            updateUrl();
+                                            return false;
+                                        }, true);
+                                        console.log('[MeshVault] Hooked Download All Files control');
+                                    };
+
+                                    const scan = () => {
+                                        const candidates = Array.from(document.querySelectorAll('a, button'));
+                                        candidates.forEach((el) => {
+                                            if (textMatches(el)) {
+                                                attachListener(el);
+                                            }
+                                        });
+                                    };
+
+                                    // Initial scan for server-rendered nodes
+                                    scan();
+
+                                    console.log('[MeshVault] Installed Download All Files observer');
+
+                                    // Observe SPA updates so we catch the button when it appears later
+                                    const observer = new MutationObserver(() => scan());
+                                    observer.observe(document.body, { childList: true, subtree: true });
+                                })();
+                            """.trimIndent()
+
+                            view?.evaluateJavascript(script, null)
                         }
                     }
                 }
@@ -376,7 +447,12 @@ private fun adjustThingiverseDownloadUrl(currentPage: String, originalUrl: Strin
     val alreadyZip = currentPage.endsWith("/zip") || originalUrl.endsWith("/zip")
 
     return if (isThingiversePage && !alreadyZip) {
-        currentPage.trimEnd('/') + "/zip"
+        val rawBase = if (originalUrl.contains("thingiverse.com/thing:")) originalUrl else currentPage
+        val cleanedBase = rawBase
+            .removeSuffix("/")
+            .replace("/files", "")
+
+        cleanedBase + "/zip"
     } else {
         originalUrl
     }

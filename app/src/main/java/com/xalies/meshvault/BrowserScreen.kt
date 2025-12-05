@@ -47,6 +47,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
+import com.xalies.meshvault.ModelMetadata
+import com.xalies.meshvault.writeModelMetadata
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -422,6 +424,23 @@ fun executeDownload(context: Context, download: PendingDownload, folderName: Str
             folderName = folderName,
             thumbnailUrl = if (localImagePath.isNotEmpty()) localImagePath else download.imageUrl
         )
+
+        val destinationFile = File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            "MeshVault/$folderName/$filename"
+        )
+        destinationFile.parentFile?.mkdirs()
+
+        val metadataFile = File(destinationFile.parentFile, "$filename.meta.json")
+        writeModelMetadata(
+            metadataFile,
+            ModelMetadata(
+                title = newModel.title,
+                pageUrl = newModel.pageUrl,
+                thumbnailPath = newModel.thumbnailUrl
+            )
+        )
+
         dao.insertModel(newModel)
 
         withContext(Dispatchers.Main) {

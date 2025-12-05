@@ -42,6 +42,8 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import coil.compose.AsyncImage
+import com.xalies.meshvault.ModelMetadata
+import com.xalies.meshvault.readModelMetadata
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -132,6 +134,15 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
             }
 
             preferences.edit().putBoolean("defaults_initialized", true).apply()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        val resyncCompleted = preferences.getBoolean("vault_resync_completed", false)
+
+        if (!resyncCompleted) {
+            resyncExistingVaultContents(dao)
+            preferences.edit().putBoolean("vault_resync_completed", true).apply()
         }
     }
 
@@ -542,6 +553,69 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
                 }) { Text("Cancel") }
             }
         )
+    }
+}
+
+private suspend fun resyncExistingVaultContents(dao: ModelDao) {
+    withContext(Dispatchers.IO) {
+        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val vaultRoot = File(downloadsDir, "MeshVault")
+
+        if (!vaultRoot.exists() || !vaultRoot.isDirectory) return@withContext
+
+        val metadataByPath = mutableMapOf<String, ModelMetadata>()
+
+        vaultRoot.walkTopDown().forEach { file ->
+            if (file.isFile && file.name.endsWith(".meta.json")) {
+                val relativePath = file.relativeTo(vaultRoot).path
+                    .removeSuffix(".meta.json")
+                    .replace(File.separatorChar, '/')
+
+                readModelMetadata(file)?.let { metadata ->
+                    metadataByPath[relativePath] = metadata
+                }
+            }
+        }
+
+        vaultRoot.walkTopDown().forEach { file ->
+            if (file == vaultRoot) return@forEach
+
+            val relativePath = file.relativeTo(vaultRoot).path.replace(File.separatorChar, '/')
+
+            if (file.isDirectory) {
+                if (dao.getFolderCount(relativePath) == 0) {
+                    dao.insertFolder(
+                        FolderEntity(
+                            name = relativePath,
+                            color = FOLDER_COLORS.random(),
+                            iconName = "Folder"
+                        )
+                    )
+                }
+            } else {
+                if (file.name.startsWith("thumb_", ignoreCase = true) || file.name.endsWith(".meta.json")) return@forEach
+
+                val folderName = file.parentFile?.relativeTo(vaultRoot)?.path?.replace(File.separatorChar, '/') ?: ""
+                val localPath = "MeshVault/${file.relativeTo(downloadsDir).path.replace(File.separatorChar, '/')}"
+
+                val metadata = metadataByPath[relativePath]
+
+                if (dao.getModelCountByLocalPath(localPath) == 0) {
+                    val restoredTitle = metadata?.title?.takeIf { it.isNotBlank() }
+                        ?: file.nameWithoutExtension.ifBlank { file.name }
+
+                    val restoredModel = ModelEntity(
+                        title = restoredTitle,
+                        pageUrl = metadata?.pageUrl?.takeIf { it.isNotBlank() } ?: file.toURI().toString(),
+                        localFilePath = localPath,
+                        folderName = folderName,
+                        thumbnailUrl = metadata?.thumbnailPath
+                    )
+
+                    dao.insertModel(restoredModel)
+                }
+            }
+        }
     }
 }
 

@@ -44,6 +44,9 @@ interface ModelDao {
     @Query("SELECT COUNT(*) FROM models WHERE folderName = :folderName OR folderName LIKE :folderPrefix")
     suspend fun getModelCountInHierarchy(folderName: String, folderPrefix: String): Int
 
+    @Query("SELECT COUNT(*) FROM models WHERE localFilePath = :localFilePath")
+    suspend fun getModelCountByLocalPath(localFilePath: String): Int
+
     @Insert
     suspend fun insertModel(model: ModelEntity)
 
@@ -58,6 +61,9 @@ interface ModelDao {
 
     @Query("DELETE FROM folders WHERE name = :folderName OR name LIKE :folderPrefix")
     suspend fun deleteFolderHierarchy(folderName: String, folderPrefix: String)
+
+    @Query("SELECT COUNT(*) FROM folders WHERE name = :folderName")
+    suspend fun getFolderCount(folderName: String): Int
 
     // --- BACKUP OPERATIONS ---
     @Query("SELECT * FROM models WHERE googleDriveId IS NULL")

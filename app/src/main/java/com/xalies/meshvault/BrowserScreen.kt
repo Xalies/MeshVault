@@ -47,8 +47,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
-import com.xalies.meshvault.ModelMetadata
-import com.xalies.meshvault.writeModelMetadata
+import com.xalies.meshvault.resizeThumbnailBytes
+import com.xalies.meshvault.writeMetadataForModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -409,10 +409,10 @@ fun executeDownload(context: Context, download: PendingDownload, folderName: Str
 
                 connection.inputStream.use { input ->
                     val bytes = input.readBytes()
-                    thumbnailBytes = bytes
+                    thumbnailBytes = resizeThumbnailBytes(bytes) ?: bytes
 
                     FileOutputStream(imgFile).use { output ->
-                        output.write(bytes)
+                        output.write(thumbnailBytes ?: bytes)
                     }
                 }
                 localImagePath = "$folderName/$imgFilename"
@@ -436,16 +436,7 @@ fun executeDownload(context: Context, download: PendingDownload, folderName: Str
         )
         destinationFile.parentFile?.mkdirs()
 
-        val metadataFile = File(destinationFile.parentFile, "$filename.meta.json")
-        writeModelMetadata(
-            metadataFile,
-            ModelMetadata(
-                title = newModel.title,
-                pageUrl = newModel.pageUrl,
-                thumbnailPath = newModel.thumbnailUrl,
-                thumbnailDataBase64 = thumbnailBytes?.let { android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP) }
-            )
-        )
+        writeMetadataForModel(newModel)
 
         dao.insertModel(newModel)
 

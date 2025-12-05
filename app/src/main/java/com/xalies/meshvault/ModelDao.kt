@@ -50,6 +50,9 @@ interface ModelDao {
     @Insert
     suspend fun insertModel(model: ModelEntity)
 
+    @Update
+    suspend fun updateModel(model: ModelEntity)
+
     @Query("DELETE FROM models WHERE id = :modelId")
     suspend fun deleteModel(modelId: Int)
 

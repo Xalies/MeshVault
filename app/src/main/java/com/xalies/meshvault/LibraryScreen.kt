@@ -63,6 +63,7 @@ import com.google.android.gms.ads.interstitial.InterstitialAd
 import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback
 import com.google.api.services.drive.DriveScopes
 import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
 import kotlin.random.Random
 
@@ -109,6 +110,7 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
     var folderDeleteCount by remember { mutableStateOf<Int?>(null) }
     var showDeleteWarning by remember { mutableStateOf(false) }
     var isResyncing by remember { mutableStateOf(false) }
+    var pendingThumbnailChange by remember { mutableStateOf<ModelEntity?>(null) }
 
     // Server States
     var isServerRunning by remember { mutableStateOf(false) }
@@ -196,6 +198,28 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
         } else {
             Toast.makeText(context, "Folder permission required to rescan downloads", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    val thumbnailPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        val model = pendingThumbnailChange
+
+        if (uri != null && model != null) {
+            scope.launch {
+                val updated = updateModelThumbnailFromUri(context, dao, model, uri)
+
+                withContext(Dispatchers.Main) {
+                    if (updated != null) {
+                        Toast.makeText(context, "Thumbnail updated", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "Unable to update thumbnail", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+
+        pendingThumbnailChange = null
     }
 
     // Filter folders based on view hierarchy
@@ -425,7 +449,11 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
                                         ModelCardWithImage(
                                             model = model,
                                             onClick = { onItemClick(model.pageUrl) },
-                                            onDelete = { scope.launch { deleteModelAndFiles(dao, model) } }
+                                            onDelete = { scope.launch { deleteModelAndFiles(dao, model) } },
+                                            onChangeThumbnail = {
+                                                pendingThumbnailChange = model
+                                                thumbnailPickerLauncher.launch("image/*")
+                                            }
                                         )
                                     }
                                 }
@@ -666,6 +694,57 @@ private suspend fun deleteModelAndFiles(dao: ModelDao, model: ModelEntity) {
     }
 }
 
+private suspend fun updateModelThumbnailFromUri(
+    context: Context,
+    dao: ModelDao,
+    model: ModelEntity,
+    uri: Uri
+): ModelEntity? {
+    return withContext(Dispatchers.IO) {
+        val contentResolver = context.contentResolver
+        val rawBytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return@withContext null
+
+        val processedBytes = resizeThumbnailBytes(rawBytes) ?: rawBytes
+
+        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val folderPath = if (model.folderName.isNotBlank()) "MeshVault/${model.folderName}" else "MeshVault"
+        val thumbnailDir = File(downloadsDir, folderPath)
+        if (!thumbnailDir.exists()) {
+            thumbnailDir.mkdirs()
+        }
+
+        val thumbnailName = "thumb_custom_${System.currentTimeMillis()}.jpg"
+        val thumbnailFile = File(thumbnailDir, thumbnailName)
+
+        FileOutputStream(thumbnailFile).use { output ->
+            output.write(processedBytes)
+        }
+
+        model.thumbnailUrl?.takeIf { it.isNotBlank() && !it.startsWith("http") }?.let { currentPath ->
+            val existing = File(downloadsDir, "MeshVault/$currentPath")
+            if (existing.exists() && existing != thumbnailFile) {
+                existing.delete()
+            }
+        }
+
+        val relativePath = if (model.folderName.isNotBlank()) {
+            "${model.folderName}/$thumbnailName"
+        } else {
+            thumbnailName
+        }
+
+        val updatedModel = model.copy(
+            thumbnailUrl = relativePath,
+            thumbnailData = processedBytes
+        )
+
+        dao.updateModel(updatedModel)
+        writeMetadataForModel(updatedModel)
+
+        updatedModel
+    }
+}
+
 private fun deleteFileIfExists(file: File) {
     if (file.exists()) {
         file.delete()
@@ -723,7 +802,12 @@ fun ColorfulFolderCard(
 
 // --- COMPONENT: MODEL CARD WITH IMAGE ---
 @Composable
-fun ModelCardWithImage(model: ModelEntity, onClick: () -> Unit, onDelete: () -> Unit) {
+fun ModelCardWithImage(
+    model: ModelEntity,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+    onChangeThumbnail: () -> Unit
+) {
     val imageBitmap = remember(model.thumbnailData) {
         model.thumbnailData?.let { data ->
             BitmapFactory.decodeByteArray(data, 0, data.size)?.asImageBitmap()
@@ -774,8 +858,16 @@ fun ModelCardWithImage(model: ModelEntity, onClick: () -> Unit, onDelete: () -> 
                 Text(model.title, style = MaterialTheme.typography.titleMedium, maxLines = 2)
                 Text(model.localFilePath.substringAfterLast("/"), style = MaterialTheme.typography.bodySmall)
             }
-            IconButton(onClick = onDelete, modifier = Modifier.align(Alignment.CenterVertically)) {
-                Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error)
+            Row(
+                modifier = Modifier.align(Alignment.CenterVertically),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onChangeThumbnail) {
+                    Icon(Icons.Default.Image, null, tint = MaterialTheme.colorScheme.primary)
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error)
+                }
             }
         }
     }

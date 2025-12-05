@@ -1,5 +1,6 @@
 package com.xalies.meshvault
 
+import android.os.Environment
 import org.json.JSONObject
 import java.io.File
 
@@ -31,4 +32,22 @@ fun writeModelMetadata(metadataFile: File, metadata: ModelMetadata) {
     }
 
     metadataFile.writeText(json.toString())
+}
+
+fun metadataFromModel(model: ModelEntity): ModelMetadata {
+    return ModelMetadata(
+        title = model.title,
+        pageUrl = model.pageUrl,
+        thumbnailPath = model.thumbnailUrl,
+        thumbnailDataBase64 = model.thumbnailData?.let { encodeThumbnailToBase64(it) }
+    )
+}
+
+fun writeMetadataForModel(model: ModelEntity) {
+    val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+    val dataFile = File(downloadsDir, model.localFilePath)
+    val parent = dataFile.parentFile ?: return
+    val metadataFile = File(parent, "${dataFile.name}.meta.json")
+
+    writeModelMetadata(metadataFile, metadataFromModel(model))
 }

@@ -3,7 +3,6 @@ package com.xalies.meshvault
 import android.content.Context
 import android.net.Uri
 import android.os.Environment
-import android.util.Base64
 import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -184,8 +183,3 @@ private fun normalizeThumbnailPath(raw: String?): String? {
     return cleaned.ifBlank { null }
 }
 
-private fun decodeBase64Image(raw: String?): ByteArray? {
-    return raw?.let {
-        runCatching { Base64.decode(it, Base64.DEFAULT) }.getOrNull()
-    }
-}

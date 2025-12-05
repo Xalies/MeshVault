@@ -392,6 +392,7 @@ fun executeDownload(context: Context, download: PendingDownload, folderName: Str
 
     scope.launch(Dispatchers.IO) {
         var localImagePath = ""
+        var thumbnailBytes: ByteArray? = null
 
         if (download.imageUrl.isNotEmpty()) {
             try {
@@ -407,8 +408,11 @@ fun executeDownload(context: Context, download: PendingDownload, folderName: Str
                 connection.connect()
 
                 connection.inputStream.use { input ->
+                    val bytes = input.readBytes()
+                    thumbnailBytes = bytes
+
                     FileOutputStream(imgFile).use { output ->
-                        input.copyTo(output)
+                        output.write(bytes)
                     }
                 }
                 localImagePath = "$folderName/$imgFilename"
@@ -422,7 +426,8 @@ fun executeDownload(context: Context, download: PendingDownload, folderName: Str
             pageUrl = download.pageUrl,
             localFilePath = "MeshVault/$folderName/$filename",
             folderName = folderName,
-            thumbnailUrl = if (localImagePath.isNotEmpty()) localImagePath else download.imageUrl
+            thumbnailUrl = if (localImagePath.isNotEmpty()) localImagePath else download.imageUrl,
+            thumbnailData = thumbnailBytes
         )
 
         val destinationFile = File(
@@ -437,7 +442,8 @@ fun executeDownload(context: Context, download: PendingDownload, folderName: Str
             ModelMetadata(
                 title = newModel.title,
                 pageUrl = newModel.pageUrl,
-                thumbnailPath = newModel.thumbnailUrl
+                thumbnailPath = newModel.thumbnailUrl,
+                thumbnailDataBase64 = thumbnailBytes?.let { android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP) }
             )
         )
 

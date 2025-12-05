@@ -4,14 +4,15 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
-import android.os.Environment
 import android.net.Uri
+import android.os.Environment
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -32,12 +33,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
+import coil.compose.AsyncImage
+import android.graphics.BitmapFactory
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
@@ -720,19 +724,41 @@ fun ColorfulFolderCard(
 // --- COMPONENT: MODEL CARD WITH IMAGE ---
 @Composable
 fun ModelCardWithImage(model: ModelEntity, onClick: () -> Unit, onDelete: () -> Unit) {
+    val imageBitmap = remember(model.thumbnailData) {
+        model.thumbnailData?.let { data ->
+            BitmapFactory.decodeByteArray(data, 0, data.size)?.asImageBitmap()
+        }
+    }
+
     // Resolve Image Path: Check if it's a URL or a Local File
-    val imagePath = if (model.thumbnailUrl?.startsWith("http") == true) {
-        model.thumbnailUrl
-    } else if (!model.thumbnailUrl.isNullOrEmpty()) {
-        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "MeshVault/${model.thumbnailUrl}")
-    } else { null }
+    val imagePath = if (imageBitmap == null) {
+        if (model.thumbnailUrl?.startsWith("http") == true) {
+            model.thumbnailUrl
+        } else if (!model.thumbnailUrl.isNullOrEmpty()) {
+            File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                "MeshVault/${model.thumbnailUrl}"
+            )
+        } else {
+            null
+        }
+    } else {
+        null
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth().height(100.dp).clickable { onClick() },
         elevation = CardDefaults.cardElevation(2.dp)
     ) {
         Row(modifier = Modifier.fillMaxSize()) {
-            if (imagePath != null) {
+            if (imageBitmap != null) {
+                Image(
+                    bitmap = imageBitmap,
+                    contentDescription = null,
+                    modifier = Modifier.width(100.dp).fillMaxHeight().background(Color.Gray),
+                    contentScale = ContentScale.Crop
+                )
+            } else if (imagePath != null) {
                 AsyncImage(
                     model = imagePath,
                     contentDescription = null,

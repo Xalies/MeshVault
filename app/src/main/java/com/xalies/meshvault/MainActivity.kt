@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.os.Bundle
 import android.view.ViewGroup
 import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.padding
@@ -30,12 +29,24 @@ class MainActivity : ComponentActivity() {
 
         // Initialize AdMob
         MobileAds.initialize(this) {}
+        // Disable all ad audio
+        MobileAds.setAppMuted(true)
+        MobileAds.setAppVolume(0f)
 
         setContent {
             MeshVaultTheme {
                 MainApp()
             }
         }
+    }
+}
+
+private fun WebView.muteAudioIfAvailable() {
+    // Reflection keeps compilation safe on older API levels while still muting audio
+    // when the method becomes available via updated WebView binaries.
+    runCatching {
+        val method = WebView::class.java.getMethod("setAudioMuted", Boolean::class.javaPrimitiveType)
+        method.invoke(this, true)
     }
 }
 
@@ -57,12 +68,19 @@ fun MainApp() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
+            // Prevent any click sounds from the WebView itself
+            isSoundEffectsEnabled = false
+
+            // Mute all media from the embedded browser when the API supports it
+            muteAudioIfAvailable()
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
                 databaseEnabled = true
                 setSupportMultipleWindows(true)
                 javaScriptCanOpenWindowsAutomatically = true
+                // Block autoplaying media to keep audio silent on older API levels
+                mediaPlaybackRequiresUserGesture = true
 
                 // FIX FOR GOOGLE SIGN-IN:
                 // We remove "; wv" from the user agent. This makes Google think

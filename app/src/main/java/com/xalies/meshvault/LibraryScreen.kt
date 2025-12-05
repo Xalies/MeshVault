@@ -653,6 +653,7 @@ private suspend fun deleteFolderAndContents(dao: ModelDao, folderName: String) {
 
         models.forEach { model ->
             deleteFileIfExists(File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), model.localFilePath))
+            deleteMetadataIfExists(model)
 
             if (!model.thumbnailUrl.isNullOrBlank() && model.thumbnailUrl?.startsWith("http") == false) {
                 deleteFileIfExists(
@@ -690,8 +691,18 @@ private suspend fun deleteModelAndFiles(dao: ModelDao, model: ModelEntity) {
             )
         }
 
+        deleteMetadataIfExists(model)
         dao.deleteModel(model.id)
     }
+}
+
+private fun deleteMetadataIfExists(model: ModelEntity) {
+    val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+    val dataFile = File(downloadsDir, model.localFilePath)
+    val parent = dataFile.parentFile ?: return
+    val metadataFile = File(parent, "${dataFile.name}.meta.json")
+
+    deleteFileIfExists(metadataFile)
 }
 
 private suspend fun updateModelThumbnailFromUri(

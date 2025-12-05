@@ -4,8 +4,11 @@ import org.json.JSONObject
 import java.io.File
 
 fun readModelMetadata(metadataFile: File): ModelMetadata? {
+    return runCatching { readModelMetadata(metadataFile.readText()) }.getOrNull()
+}
+
+fun readModelMetadata(raw: String): ModelMetadata? {
     return try {
-        val raw = metadataFile.readText()
         val json = JSONObject(raw)
 
         ModelMetadata(

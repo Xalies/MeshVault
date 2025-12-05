@@ -3,7 +3,9 @@ package com.xalies.meshvault
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
 import android.os.Environment
+import android.net.Uri
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -42,8 +44,7 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import coil.compose.AsyncImage
-import com.xalies.meshvault.ModelMetadata
-import com.xalies.meshvault.readModelMetadata
+import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -91,6 +92,7 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
     val database = remember { AppDatabase.getDatabase(context) }
     val dao = database.modelDao()
     val scope = rememberCoroutineScope()
+    var savedVaultUri by remember { mutableStateOf(preferences.getString("vault_tree_uri", null)) }
 
     // Navigation State
     var currentFolder by remember { mutableStateOf<String?>(null) }
@@ -102,6 +104,7 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
     var folderToDelete by remember { mutableStateOf<String?>(null) }
     var folderDeleteCount by remember { mutableStateOf<Int?>(null) }
     var showDeleteWarning by remember { mutableStateOf(false) }
+    var isResyncing by remember { mutableStateOf(false) }
 
     // Server States
     var isServerRunning by remember { mutableStateOf(false) }
@@ -138,12 +141,7 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
     }
 
     LaunchedEffect(Unit) {
-        val resyncCompleted = preferences.getBoolean("vault_resync_completed", false)
-
-        if (!resyncCompleted) {
-            resyncExistingVaultContents(dao)
-            preferences.edit().putBoolean("vault_resync_completed", true).apply()
-        }
+        resyncExistingVaultContents(context, dao)
     }
 
     // Google Drive Sign-In Launcher
@@ -170,6 +168,29 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
             Toast.makeText(context, "Auto-Backup Enabled!", Toast.LENGTH_SHORT).show()
         } else {
             Toast.makeText(context, "Sign-In Failed", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    val vaultPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(uri, flags)
+            }
+
+            preferences.edit().putString("vault_tree_uri", uri.toString()).apply()
+            savedVaultUri = uri.toString()
+
+            scope.launch {
+                isResyncing = true
+                resyncExistingVaultContents(context, dao, forceRescan = true)
+                Toast.makeText(context, "Vault rescan complete", Toast.LENGTH_SHORT).show()
+                isResyncing = false
+            }
+        } else {
+            Toast.makeText(context, "Folder permission required to rescan downloads", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -232,11 +253,11 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
                             }
 
                             // 2. WiFi Button
-                            IconButton(onClick = {
-                                if (isServerRunning) {
-                                    wifiServer.stop()
-                                    isServerRunning = false
-                                } else {
+                                IconButton(onClick = {
+                                    if (isServerRunning) {
+                                        wifiServer.stop()
+                                        isServerRunning = false
+                                    } else {
                                     val startCount = preferences.getInt("server_start_count", 0) + 1
                                     preferences.edit().putInt("server_start_count", startCount).apply()
                                     val shouldShowAd = startCount % 3 == 0
@@ -280,6 +301,42 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
                                     "PC Export",
                                     tint = if (isServerRunning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                 )
+                            }
+
+                            IconButton(
+                                enabled = !isResyncing,
+                                onClick = {
+                                    val persistedTree = savedVaultUri?.let { uri ->
+                                        runCatching { DocumentFile.fromTreeUri(context, Uri.parse(uri)) }
+                                            .getOrNull()
+                                    }
+
+                                    if (persistedTree == null || !persistedTree.exists()) {
+                                        Toast.makeText(
+                                            context,
+                                            "Pick your MeshVault folder so we can rescan old downloads",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                        vaultPickerLauncher.launch(null)
+                                    } else {
+                                        scope.launch {
+                                            isResyncing = true
+                                            resyncExistingVaultContents(context, dao, forceRescan = true)
+                                            Toast.makeText(context, "Vault rescan complete", Toast.LENGTH_SHORT).show()
+                                            isResyncing = false
+                                        }
+                                    }
+                                }
+                            ) {
+                                if (isResyncing) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                } else {
+                                    Icon(Icons.Default.Refresh, "Rescan vault")
+                                }
                             }
                         }
                     )
@@ -553,69 +610,6 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
                 }) { Text("Cancel") }
             }
         )
-    }
-}
-
-private suspend fun resyncExistingVaultContents(dao: ModelDao) {
-    withContext(Dispatchers.IO) {
-        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        val vaultRoot = File(downloadsDir, "MeshVault")
-
-        if (!vaultRoot.exists() || !vaultRoot.isDirectory) return@withContext
-
-        val metadataByPath = mutableMapOf<String, ModelMetadata>()
-
-        vaultRoot.walkTopDown().forEach { file ->
-            if (file.isFile && file.name.endsWith(".meta.json")) {
-                val relativePath = file.relativeTo(vaultRoot).path
-                    .removeSuffix(".meta.json")
-                    .replace(File.separatorChar, '/')
-
-                readModelMetadata(file)?.let { metadata ->
-                    metadataByPath[relativePath] = metadata
-                }
-            }
-        }
-
-        vaultRoot.walkTopDown().forEach { file ->
-            if (file == vaultRoot) return@forEach
-
-            val relativePath = file.relativeTo(vaultRoot).path.replace(File.separatorChar, '/')
-
-            if (file.isDirectory) {
-                if (dao.getFolderCount(relativePath) == 0) {
-                    dao.insertFolder(
-                        FolderEntity(
-                            name = relativePath,
-                            color = FOLDER_COLORS.random(),
-                            iconName = "Folder"
-                        )
-                    )
-                }
-            } else {
-                if (file.name.startsWith("thumb_", ignoreCase = true) || file.name.endsWith(".meta.json")) return@forEach
-
-                val folderName = file.parentFile?.relativeTo(vaultRoot)?.path?.replace(File.separatorChar, '/') ?: ""
-                val localPath = "MeshVault/${file.relativeTo(downloadsDir).path.replace(File.separatorChar, '/')}"
-
-                val metadata = metadataByPath[relativePath]
-
-                if (dao.getModelCountByLocalPath(localPath) == 0) {
-                    val restoredTitle = metadata?.title?.takeIf { it.isNotBlank() }
-                        ?: file.nameWithoutExtension.ifBlank { file.name }
-
-                    val restoredModel = ModelEntity(
-                        title = restoredTitle,
-                        pageUrl = metadata?.pageUrl?.takeIf { it.isNotBlank() } ?: file.toURI().toString(),
-                        localFilePath = localPath,
-                        folderName = folderName,
-                        thumbnailUrl = metadata?.thumbnailPath
-                    )
-
-                    dao.insertModel(restoredModel)
-                }
-            }
-        }
     }
 }
 

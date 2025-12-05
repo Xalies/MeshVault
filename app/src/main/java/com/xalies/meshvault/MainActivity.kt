@@ -54,11 +54,16 @@ private fun WebView.muteAudioIfAvailable() {
 @Composable
 fun MainApp() {
     val context = LocalContext.current
+    val dao = remember { AppDatabase.getDatabase(context).modelDao() }
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
     var currentBrowserUrl by remember { mutableStateOf("https://www.printables.com") }
+
+    LaunchedEffect(Unit) {
+        resyncExistingVaultContents(context, dao)
+    }
 
     // --- FIX 1 & 2: CREATE PERSISTENT WEBVIEW ---
     // We create the WebView once here. It survives tab switching.

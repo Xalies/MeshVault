@@ -34,7 +34,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
-            android:theme="@style/Theme.MeshVault"
+            android:theme="@style/Theme.Splash"
             android:configChanges="orientation|screenSize|keyboardHidden">
 
             <!-- 1. THE LAUNCHER INTENT (Makes icon appear in App Drawer) -->

@@ -49,6 +49,7 @@ android {
 val room_version = "2.6.1"
 dependencies {
     implementation(libs.androidx.core.ktx)
+    implementation("androidx.core:core-splashscreen:1.2.0")
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
     implementation("androidx.navigation:navigation-compose:2.8.0")

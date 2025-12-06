@@ -10,6 +10,7 @@ import android.view.ViewGroup
 import android.webkit.URLUtil
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse // Added Import
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
@@ -63,7 +64,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 private const val LOG_TAG = "BrowserScreen"
-
 
 @OptIn(ExperimentalFoundationApi::class)
 @SuppressLint("SetJavaScriptEnabled")
@@ -146,6 +146,15 @@ fun BrowserScreen(webView: WebView) {
                     }
 
                     webViewClient = object : WebViewClient() {
+                        // --- NEW: AD BLOCKING INTERCEPTOR ---
+                        override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                            if (AdBlocker.shouldBlock(request?.url?.toString())) {
+                                Log.d(LOG_TAG, "Blocking Ad: ${request?.url}")
+                                return AdBlocker.createEmptyResource()
+                            }
+                            return super.shouldInterceptRequest(view, request)
+                        }
+
                         override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                             val url = request?.url?.toString() ?: return false
                             if (url.startsWith("blob:") || url.startsWith("javascript:")) return false
@@ -155,6 +164,9 @@ fun BrowserScreen(webView: WebView) {
 
                         override fun onPageFinished(view: WebView?, url: String?) {
                             super.onPageFinished(view, url)
+
+                            // --- NEW: INJECT COOKIE HIDER ---
+                            view?.evaluateJavascript(AdBlocker.HIDE_ANNOYANCES_SCRIPT, null)
 
                             url?.let { currentUrl ->
                                 pageLoadScriptForPage(currentUrl)?.let { script ->

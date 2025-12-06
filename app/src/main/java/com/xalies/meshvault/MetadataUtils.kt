@@ -35,11 +35,13 @@ fun writeModelMetadata(metadataFile: File, metadata: ModelMetadata) {
 }
 
 fun metadataFromModel(model: ModelEntity): ModelMetadata {
+    val thumbnailBytes = model.thumbnailData ?: loadThumbnailBytes(model.thumbnailUrl)
+
     return ModelMetadata(
         title = model.title,
         pageUrl = model.pageUrl,
         thumbnailPath = model.thumbnailUrl,
-        thumbnailDataBase64 = model.thumbnailData?.let { encodeThumbnailToBase64(it) }
+        thumbnailDataBase64 = thumbnailBytes?.let { encodeThumbnailToBase64(it) }
     )
 }
 
@@ -50,4 +52,21 @@ fun writeMetadataForModel(model: ModelEntity) {
     val metadataFile = File(parent, "${dataFile.name}.meta.json")
 
     writeModelMetadata(metadataFile, metadataFromModel(model))
+}
+
+private fun loadThumbnailBytes(thumbnailUrl: String?): ByteArray? {
+    if (thumbnailUrl.isNullOrBlank()) return null
+    if (thumbnailUrl.startsWith("http", ignoreCase = true)) return null
+
+    val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+    val cleanedPath = thumbnailUrl.removePrefix("/").let { raw ->
+        if (raw.startsWith("MeshVault/")) raw.removePrefix("MeshVault/") else raw
+    }
+
+    val thumbnailFile = File(downloadsDir, "MeshVault/$cleanedPath")
+    if (thumbnailFile.exists()) {
+        return runCatching { thumbnailFile.readBytes() }.getOrNull()
+    }
+
+    return null
 }

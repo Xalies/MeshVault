@@ -1,6 +1,7 @@
 package com.xalies.meshvault
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.os.Bundle
 import android.view.ViewGroup
 import android.webkit.WebView
@@ -44,8 +45,6 @@ class MainActivity : ComponentActivity() {
 }
 
 private fun WebView.muteAudioIfAvailable() {
-    // Reflection keeps compilation safe on older API levels while still muting audio
-    // when the method becomes available via updated WebView binaries.
     runCatching {
         val method = WebView::class.java.getMethod("setAudioMuted", Boolean::class.javaPrimitiveType)
         method.invoke(this, true)
@@ -61,24 +60,27 @@ fun MainApp() {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
+    // Check Onboarding State
+    val preferences = remember { context.getSharedPreferences("library_prefs", Context.MODE_PRIVATE) }
+    val onboardingCompleted = remember { preferences.getBoolean("onboarding_completed", false) }
+    val startDestination = if (onboardingCompleted) "dashboard" else "onboarding"
+
     var currentBrowserUrl by remember { mutableStateOf("https://www.printables.com") }
 
     LaunchedEffect(Unit) {
-        resyncExistingVaultContents(context, dao)
+        if (onboardingCompleted) {
+            resyncExistingVaultContents(context, dao)
+        }
     }
 
-    // --- FIX 1 & 2: CREATE PERSISTENT WEBVIEW ---
-    // We create the WebView once here. It survives tab switching.
+    // --- PERSISTENT WEBVIEW ---
     val sharedWebView = remember {
         WebView(context).apply {
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
-            // Prevent any click sounds from the WebView itself
             isSoundEffectsEnabled = false
-
-            // Mute all media from the embedded browser when the API supports it
             muteAudioIfAvailable()
             settings.apply {
                 javaScriptEnabled = true
@@ -86,12 +88,7 @@ fun MainApp() {
                 databaseEnabled = true
                 setSupportMultipleWindows(true)
                 javaScriptCanOpenWindowsAutomatically = true
-                // Block autoplaying media to keep audio silent on older API levels
                 mediaPlaybackRequiresUserGesture = true
-
-                // FIX FOR GOOGLE SIGN-IN:
-                // We remove "; wv" from the user agent. This makes Google think
-                // we are a real Chrome browser, not an embedded WebView.
                 userAgentString = userAgentString.replace("; wv", "")
             }
         }
@@ -99,56 +96,68 @@ fun MainApp() {
 
     Scaffold(
         bottomBar = {
-            NavigationBar {
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.Home, "Dashboard") },
-                    label = { Text("Dashboard") },
-                    selected = currentRoute == "dashboard",
-                    onClick = {
-                        navController.navigate("dashboard") {
-                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
+            // Hide BottomBar on Onboarding Screen
+            if (currentRoute != "onboarding") {
+                NavigationBar {
+                    NavigationBarItem(
+                        icon = { Icon(Icons.Default.Home, "Dashboard") },
+                        label = { Text("Dashboard") },
+                        selected = currentRoute == "dashboard",
+                        onClick = {
+                            navController.navigate("dashboard") {
+                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
                         }
-                    }
-                )
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.Public, "Browser") },
-                    label = { Text("Browser") },
-                    selected = currentRoute == "browser",
-                    onClick = {
-                        navController.navigate("browser") {
-                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
+                    )
+                    NavigationBarItem(
+                        icon = { Icon(Icons.Default.Public, "Browser") },
+                        label = { Text("Browser") },
+                        selected = currentRoute == "browser",
+                        onClick = {
+                            navController.navigate("browser") {
+                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
                         }
-                    }
-                )
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.Folder, "Vault") },
-                    label = { Text("Vault") },
-                    selected = currentRoute == "library",
-                    onClick = {
-                        navController.navigate("library") {
-                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
+                    )
+                    NavigationBarItem(
+                        icon = { Icon(Icons.Default.Folder, "Vault") },
+                        label = { Text("Vault") },
+                        selected = currentRoute == "library",
+                        onClick = {
+                            navController.navigate("library") {
+                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
                         }
-                    }
-                )
+                    )
+                }
             }
         }
     ) { innerPadding ->
         NavHost(
             navController = navController,
-            startDestination = "dashboard",
+            startDestination = startDestination,
             modifier = Modifier.padding(innerPadding)
         ) {
+            composable("onboarding") {
+                OnboardingScreen(
+                    onFinish = {
+                        navController.navigate("dashboard") {
+                            popUpTo("onboarding") { inclusive = true }
+                        }
+                    }
+                )
+            }
+
             composable("dashboard") {
                 DashboardScreen(
                     onSiteSelected = { url ->
                         currentBrowserUrl = url
-                        // We must explicitly load the URL here because the WebView is reused
                         sharedWebView.loadUrl(url)
                         navController.navigate("browser") {
                             popUpTo(navController.graph.findStartDestination().id) { saveState = true }
@@ -160,20 +169,14 @@ fun MainApp() {
             }
 
             composable("browser") {
-                // We pass the EXISTING WebView instance
                 BrowserScreen(webView = sharedWebView)
             }
 
             composable("library") {
                 LibraryScreen(
                     onItemClick = { url ->
-                        // 1. Update the shared URL state
                         currentBrowserUrl = url
-
-                        // 2. Force the persistent WebView to load it immediately
                         sharedWebView.loadUrl(url)
-
-                        // 3. Switch tabs to the Browser
                         navController.navigate("browser") {
                             popUpTo(navController.graph.findStartDestination().id) {
                                 saveState = true

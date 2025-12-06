@@ -13,5 +13,6 @@ data class ModelEntity(
     val thumbnailUrl: String? = null,
     val thumbnailData: ByteArray? = null,
     val dateAdded: Long = System.currentTimeMillis(),
-    val googleDriveId: String? = null // New field for backup tracking
+    val googleDriveId: String? = null,
+    val isDeleted: Boolean = false
 )

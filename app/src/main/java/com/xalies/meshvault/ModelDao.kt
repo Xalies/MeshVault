@@ -16,7 +16,8 @@ interface ModelDao {
     @Query("SELECT * FROM folders ORDER BY name ASC")
     suspend fun getAllFoldersList(): List<FolderEntity>
 
-    @Query("SELECT * FROM models ORDER BY dateAdded DESC")
+    // Updated: Only show non-deleted models
+    @Query("SELECT * FROM models WHERE isDeleted = 0 ORDER BY dateAdded DESC")
     suspend fun getAllModels(): List<ModelEntity>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
@@ -29,19 +30,20 @@ interface ModelDao {
     suspend fun deleteFolder(folderName: String)
 
     // --- MODEL OPERATIONS ---
-    @Query("SELECT * FROM models WHERE folderName = :folderName ORDER BY dateAdded DESC")
+    // Updated: Only show non-deleted models
+    @Query("SELECT * FROM models WHERE folderName = :folderName AND isDeleted = 0 ORDER BY dateAdded DESC")
     fun getModelsInFolder(folderName: String): Flow<List<ModelEntity>>
 
-    @Query("SELECT * FROM models WHERE folderName = :folderName")
+    @Query("SELECT * FROM models WHERE folderName = :folderName AND isDeleted = 0")
     suspend fun getModelsInFolderList(folderName: String): List<ModelEntity>
 
-    @Query("SELECT * FROM models WHERE folderName = :folderName OR folderName LIKE :folderPrefix")
+    @Query("SELECT * FROM models WHERE (folderName = :folderName OR folderName LIKE :folderPrefix) AND isDeleted = 0")
     suspend fun getModelsInHierarchy(folderName: String, folderPrefix: String): List<ModelEntity>
 
-    @Query("SELECT COUNT(*) FROM models WHERE folderName = :folderName")
+    @Query("SELECT COUNT(*) FROM models WHERE folderName = :folderName AND isDeleted = 0")
     suspend fun getModelCount(folderName: String): Int
 
-    @Query("SELECT COUNT(*) FROM models WHERE folderName = :folderName OR folderName LIKE :folderPrefix")
+    @Query("SELECT COUNT(*) FROM models WHERE (folderName = :folderName OR folderName LIKE :folderPrefix) AND isDeleted = 0")
     suspend fun getModelCountInHierarchy(folderName: String, folderPrefix: String): Int
 
     @Query("SELECT COUNT(*) FROM models WHERE localFilePath = :localFilePath")
@@ -53,9 +55,18 @@ interface ModelDao {
     @Update
     suspend fun updateModel(model: ModelEntity)
 
+    // RENAMED: This is now a hard delete (removes from DB permanently)
     @Query("DELETE FROM models WHERE id = :modelId")
-    suspend fun deleteModel(modelId: Int)
+    suspend fun hardDeleteModel(modelId: Int)
 
+    // NEW: Soft delete (marks for sync removal)
+    @Query("UPDATE models SET isDeleted = 1 WHERE id = :modelId")
+    suspend fun softDeleteModel(modelId: Int)
+
+    // Updated: Mark all in folder as deleted (if we implement folder sync later) or just hard delete if needed
+    // For now, let's keep hard delete for folder wipes to avoid complexity, or update to soft delete.
+    // Given the complexity of folder syncing, for now, "Delete Folder" will still be a hard delete of contents
+    // unless we iterate. Let's keep these as hard deletes for now for simplicity in this specific query.
     @Query("DELETE FROM models WHERE folderName = :folderName")
     suspend fun deleteModelsInFolder(folderName: String)
 
@@ -69,8 +80,12 @@ interface ModelDao {
     suspend fun getFolderCount(folderName: String): Int
 
     // --- BACKUP OPERATIONS ---
-    @Query("SELECT * FROM models WHERE googleDriveId IS NULL")
+    @Query("SELECT * FROM models WHERE googleDriveId IS NULL AND isDeleted = 0")
     suspend fun getPendingUploads(): List<ModelEntity>
+
+    // NEW: Get items that need to be removed from Drive
+    @Query("SELECT * FROM models WHERE isDeleted = 1 AND googleDriveId IS NOT NULL")
+    suspend fun getPendingDeletions(): List<ModelEntity>
 
     @Query("UPDATE models SET googleDriveId = :driveId WHERE id = :modelId")
     suspend fun markAsUploaded(modelId: Int, driveId: String)

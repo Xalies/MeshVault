@@ -33,20 +33,21 @@ class GoogleDriveHelper(private val context: Context) {
         }
     }
 
-    suspend fun uploadFile(localFile: File, mimeType: String, folderName: String): String? = withContext(Dispatchers.IO) {
+    suspend fun uploadFile(localFile: File, mimeType: String, folderPath: String): String? = withContext(Dispatchers.IO) {
         if (driveService == null) return@withContext null
 
         try {
-            // 1. Check/Create "MeshVault" folder on Drive
-            val parentId = getOrCreateFolder("MeshVault") ?: return@withContext null
+            var currentParentId = getOrCreateFolder("MeshVault") ?: return@withContext null
 
-            // 2. Check/Create Subfolder (e.g., "SciFi")
-            val subFolderId = getOrCreateFolder(folderName, parentId) ?: parentId
+            val folders = folderPath.split("/").filter { it.isNotBlank() }
 
-            // 3. Upload File
+            for (folderName in folders) {
+                currentParentId = getOrCreateFolder(folderName, currentParentId) ?: currentParentId
+            }
+
             val metadata = com.google.api.services.drive.model.File()
             metadata.name = localFile.name
-            metadata.parents = listOf(subFolderId)
+            metadata.parents = listOf(currentParentId)
 
             val content = FileContent(mimeType, localFile)
             val uploadedFile = driveService!!.files().create(metadata, content)
@@ -60,8 +61,20 @@ class GoogleDriveHelper(private val context: Context) {
         }
     }
 
+    suspend fun trashFile(fileId: String): Boolean = withContext(Dispatchers.IO) {
+        if (driveService == null) return@withContext false
+        try {
+            val updates = com.google.api.services.drive.model.File()
+            updates.trashed = true
+            driveService!!.files().update(fileId, updates).execute()
+            return@withContext true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext false
+        }
+    }
+
     private fun getOrCreateFolder(folderName: String, parentId: String? = null): String? {
-        // Query to check if folder exists
         var query = "mimeType='application/vnd.google-apps.folder' and name='$folderName' and trashed=false"
         if (parentId != null) {
             query += " and '$parentId' in parents"
@@ -72,7 +85,6 @@ class GoogleDriveHelper(private val context: Context) {
             return result.files[0].id
         }
 
-        // Create if not exists
         val metadata = com.google.api.services.drive.model.File()
         metadata.name = folderName
         metadata.mimeType = "application/vnd.google-apps.folder"

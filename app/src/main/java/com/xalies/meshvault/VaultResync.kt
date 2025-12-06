@@ -6,6 +6,7 @@ import android.os.Environment
 import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.io.File
 
 suspend fun resyncExistingVaultContents(
@@ -18,14 +19,25 @@ suspend fun resyncExistingVaultContents(
 
     if (resyncCompleted && !forceRescan) return
 
-        withContext(Dispatchers.IO) {
-            val metadataByPath = mutableMapOf<String, ModelMetadata>()
-            val contentResolver = context.contentResolver
+    withContext(Dispatchers.IO) {
+        val metadataByPath = mutableMapOf<String, ModelMetadata>()
+        val contentResolver = context.contentResolver
         val vaultTreeUri = preferences.getString("vault_tree_uri", null)?.let { Uri.parse(it) }
         val vaultRootDocument = vaultTreeUri?.let { DocumentFile.fromTreeUri(context, it) }
             ?.takeIf { it.exists() && it.isDirectory }
 
         var scanSucceeded = false
+
+        // Helper to generate JSON content for a model
+        fun generateMetadataJson(model: ModelEntity): String {
+            val meta = metadataFromModel(model)
+            return JSONObject().apply {
+                put("title", meta.title)
+                put("pageUrl", meta.pageUrl)
+                meta.thumbnailPath?.let { put("thumbnailPath", it) }
+                meta.thumbnailDataBase64?.let { put("thumbnailDataBase64", it) }
+            }.toString()
+        }
 
         fun cacheMetadataFromDocument(file: DocumentFile, basePath: String) {
             for (child in file.listFiles()) {
@@ -75,6 +87,7 @@ suspend fun resyncExistingVaultContents(
                     val metadata = metadataByPath[relativePath]
 
                     if (dao.getModelCountByLocalPath(localPath) == 0) {
+                        // 1. Restore/Create Model Object
                         val restoredTitle = metadata?.title?.takeIf { it.isNotBlank() }
                             ?: name.substringBeforeLast('.', missingDelimiterValue = name)
 
@@ -88,6 +101,23 @@ suspend fun resyncExistingVaultContents(
                         )
 
                         dao.insertModel(restoredModel)
+
+                        // 2. Generate Metadata File if Missing
+                        if (metadata == null) {
+                            runCatching {
+                                val metaName = "$name.meta.json"
+                                // Check if the file already exists (unlikely if metadata was null, but good safety)
+                                if (file.findFile(metaName) == null) {
+                                    val newMetaFile = file.createFile("application/json", metaName)
+                                    if (newMetaFile != null) {
+                                        val jsonContent = generateMetadataJson(restoredModel)
+                                        contentResolver.openOutputStream(newMetaFile.uri)?.use { os ->
+                                            os.write(jsonContent.toByteArray())
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -98,6 +128,7 @@ suspend fun resyncExistingVaultContents(
             cacheMetadataFromDocument(vaultRootDocument, "")
             applyDocumentTree(vaultRootDocument, "")
         } else {
+            // --- Standard File Access Fallback ---
             val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             val vaultRoot = File(downloadsDir, "MeshVault")
 
@@ -105,6 +136,7 @@ suspend fun resyncExistingVaultContents(
 
             scanSucceeded = true
 
+            // 1. Cache Existing Metadata
             vaultRoot.walkTopDown().forEach { file ->
                 if (file.isFile && file.name.endsWith(".meta.json")) {
                     val relativePath = file.relativeTo(vaultRoot).path
@@ -119,6 +151,7 @@ suspend fun resyncExistingVaultContents(
                 }
             }
 
+            // 2. Scan for Files
             for (file in vaultRoot.walkTopDown()) {
                 if (file == vaultRoot) continue
 
@@ -143,6 +176,7 @@ suspend fun resyncExistingVaultContents(
                     val metadata = metadataByPath[relativePath]
 
                     if (dao.getModelCountByLocalPath(localPath) == 0) {
+                        // Restore/Create Model
                         val restoredTitle = metadata?.title?.takeIf { it.isNotBlank() }
                             ?: file.nameWithoutExtension.ifBlank { file.name }
 
@@ -156,6 +190,11 @@ suspend fun resyncExistingVaultContents(
                         )
 
                         dao.insertModel(restoredModel)
+
+                        // Generate Metadata if missing
+                        if (metadata == null) {
+                            writeMetadataForModel(restoredModel)
+                        }
                     }
                 }
             }
@@ -182,4 +221,3 @@ private fun normalizeThumbnailPath(raw: String?): String? {
 
     return cleaned.ifBlank { null }
 }
-

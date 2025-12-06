@@ -13,29 +13,40 @@ class BackupWorker(appContext: Context, workerParams: WorkerParameters) :
         val dao = database.modelDao()
         val driveHelper = GoogleDriveHelper(applicationContext)
 
-        // 1. Get pending files
+        var hasActivity = false
+
+        // 1. Process Uploads
         val pendingModels = dao.getPendingUploads()
-        if (pendingModels.isEmpty()) return Result.success()
-
-        var successCount = 0
-
-        // 2. Upload loop
         for (model in pendingModels) {
-            // Find the actual file
             val file = File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), model.localFilePath)
 
             if (file.exists()) {
-                // Upload
                 val driveId = driveHelper.uploadFile(file, "application/zip", model.folderName)
-
                 if (driveId != null) {
-                    // 3. Mark as uploaded in DB
                     dao.markAsUploaded(model.id, driveId)
-                    successCount++
+                    hasActivity = true
                 }
             }
         }
 
-        return if (successCount > 0) Result.success() else Result.retry()
+        // 2. Process Deletions (Sync Deletes)
+        val pendingDeletions = dao.getPendingDeletions()
+        for (model in pendingDeletions) {
+            if (model.googleDriveId != null) {
+                val success = driveHelper.trashFile(model.googleDriveId)
+                if (success) {
+                    // Permanently remove from local DB after cloud delete
+                    dao.hardDeleteModel(model.id)
+                    hasActivity = true
+                }
+            } else {
+                // Should technically not happen due to query, but safe fallback
+                dao.hardDeleteModel(model.id)
+            }
+        }
+
+        // If we did nothing, we can retry later or just succeed.
+        // Returning success usually fine unless there was a specific error.
+        return Result.success()
     }
 }

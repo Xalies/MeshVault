@@ -5,7 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [ModelEntity::class, FolderEntity::class], version = 5) // Bumped to 5 for thumbnailData
+@Database(entities = [ModelEntity::class, FolderEntity::class], version = 6)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun modelDao(): ModelDao
 

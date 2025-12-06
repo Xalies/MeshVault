@@ -319,6 +319,8 @@ class WifiServer(private val dao: ModelDao) {
             validModels.forEach { model ->
                 val file = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), model.localFilePath)
                 val fileName = file.name
+                val modelTitle = model.title.ifBlank { fileName }
+                val safeTitle = modelTitle.replace("'", "\\'")
 
                 val dlLink = "/${encodePath(model.localFilePath.trimStart('/'))}"
                 val srcUrl = model.pageUrl
@@ -333,7 +335,7 @@ class WifiServer(private val dao: ModelDao) {
                 val sizeStr = String.format("%.2f MB", file.length() / 1024.0 / 1024.0)
                 val metaText = if (showAllModels) "Folder: ${model.folderName} • $sizeStr" else sizeStr
 
-                sb.append("<div class='card' onclick=\"selectModel('$fileName', '$metaText', '$dlLink', '$srcUrl', '$imgUrl')\">")
+                sb.append("<div class='card' onclick=\"selectModel('$safeTitle', '$metaText', '$dlLink', '$srcUrl', '$imgUrl')\">")
                 // Value needs to match how the POST handler expects it (relative to root)
                 val zipValue = model.localFilePath.trimStart('/')
                 sb.append("<input type='checkbox' name='files' value='$zipValue' class='checkbox-overlay' onclick='event.stopPropagation()'>")
@@ -344,7 +346,7 @@ class WifiServer(private val dao: ModelDao) {
                     sb.append("<div class='card-thumb' style='display:flex;align-items:center;justify-content:center;color:#333;'>No Preview</div>")
                 }
                 sb.append("<div class='card-body'>")
-                sb.append("<div class='card-title'>$fileName</div>")
+                sb.append("<div class='card-title'>$modelTitle</div>")
                 if (showAllModels) {
                     sb.append("<div class='card-meta'>${model.folderName}</div>")
                 }

@@ -214,6 +214,20 @@ private val SITE_HANDLERS = listOf(
         }
     ),
     SiteDownloadHandler(
+        domains = listOf("thangs.com"),
+        filenameOverride = { download, fallback ->
+            if (!fallback.endsWith(".bin", ignoreCase = true)) return@SiteDownloadHandler fallback
+
+            val safeTitle = download.title
+                .lowercase()
+                .replace("[^a-z0-9]+".toRegex(), "-")
+                .trim('-')
+                .ifBlank { "thangs-download" }
+
+            "$safeTitle.zip"
+        }
+    ),
+    SiteDownloadHandler(
         domains = listOf("makerworld.com", "bambulab.com", "bblmw.com"),
         metadataScript = MAKERWORLD_METADATA_SCRIPT
     ),

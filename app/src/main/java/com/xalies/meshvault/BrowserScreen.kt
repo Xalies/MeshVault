@@ -48,6 +48,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
+import com.xalies.meshvault.adjustDownloadUrlForSite
+import com.xalies.meshvault.metadataScriptForPage
 import com.xalies.meshvault.resizeThumbnailBytes
 import com.xalies.meshvault.writeMetadataForModel
 import kotlinx.coroutines.Dispatchers
@@ -58,12 +60,13 @@ import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
+private const val LOG_TAG = "BrowserScreen"
+
 
 @OptIn(ExperimentalFoundationApi::class)
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun BrowserScreen(webView: WebView) {
-    val logTag = "BrowserScreen"
     val context = LocalContext.current
     val database = remember { AppDatabase.getDatabase(context) }
     val dao = database.modelDao()
@@ -105,7 +108,7 @@ fun BrowserScreen(webView: WebView) {
 
                         override fun onConsoleMessage(message: android.webkit.ConsoleMessage?): Boolean {
                             message?.let {
-                                Log.d(logTag, "[JS] ${it.message()} (${it.sourceId()}:${it.lineNumber()})")
+                                Log.d(LOG_TAG, "[JS] ${it.message()} (${it.sourceId()}:${it.lineNumber()})")
                             }
                             return super.onConsoleMessage(message)
                         }
@@ -113,63 +116,28 @@ fun BrowserScreen(webView: WebView) {
 
                     setDownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
                         val currentPage = this.url ?: ""
-                        val adjustedUrl = adjustThingiverseDownloadUrl(currentPage, url)
+                        val adjustedUrl = adjustDownloadUrlForSite(currentPage, url)
 
-                        Log.d(logTag, "Download requested: original=$url currentPage=$currentPage adjusted=$adjustedUrl")
+                        Log.d(LOG_TAG, "Download requested: original=$url currentPage=$currentPage adjusted=$adjustedUrl")
 
                         // --- ROBUST SCRAPER ---
-                        val script = """
-                            (function() {
-                                function getLargestImage() {
-                                    var maxArea = 0;
-                                    var bestUrl = "";
-                                    var images = document.getElementsByTagName('img');
-                                    
-                                    for (var i = 0; i < images.length; i++) {
-                                        var img = images[i];
-                                        // Ignore tiny icons (must be > 150px wide/tall)
-                                        if (img.naturalWidth < 150 || img.naturalHeight < 150) continue;
-                                        
-                                        var area = img.width * img.height;
-                                        if (area > maxArea) {
-                                            maxArea = area;
-                                            bestUrl = img.src || img.dataset.src;
-                                        }
-                                    }
-                                    return bestUrl;
-                                }
-
-                                function findMainImage() {
-                                    // 1. Try Meta Tags
-                                    var img = document.querySelector('meta[property="og:image"]')?.content ||
-                                              document.querySelector('meta[name="twitter:image"]')?.content;
-                                    if (img) return img;
-                                    
-                                    // 2. Try Schema.org (Meta or Img)
-                                    var schemaImg = document.querySelector('[itemprop="image"]');
-                                    if (schemaImg) {
-                                        return schemaImg.content || schemaImg.src;
-                                    }
-                                    
-                                    // 3. Fallback: Visual Scan for biggest image
-                                    return getLargestImage();
-                                }
-                                
-                                var title = document.querySelector('meta[property="og:title"]')?.content || document.title;
-                                var finalImg = findMainImage();
-                                
-                                return title + "|||" + (finalImg || "");
-                            })();
-                        """.trimIndent()
+                        val script = metadataScriptForPage(currentPage)
 
                         this.evaluateJavascript(script) { result ->
                             val cleanResult = result.replace("^\"|\"$".toRegex(), "")
                             val unescaped = cleanResult.replace("\\/", "/")
                             val parts = unescaped.split("|||")
-                            val t = if (parts.isNotEmpty()) parts[0] else "Unknown"
-                            val i = if (parts.size > 1) parts[1] else ""
 
-                            pendingDownload = PendingDownload(adjustedUrl, currentPage, userAgent, contentDisposition, mimetype, t, i)
+                            val parsedTitle = parts.getOrNull(0)?.takeIf { it.isNotBlank() }
+                            val parsedImage = parts.getOrNull(1)?.takeIf { it.isNotBlank() }
+
+                            val fallbackTitle = this.title?.takeIf { it.isNotBlank() }
+                                ?: URLUtil.guessFileName(adjustedUrl, contentDisposition, mimetype)
+
+                            val title = parsedTitle ?: fallbackTitle ?: "Unknown"
+                            val image = parsedImage ?: ""
+
+                            pendingDownload = PendingDownload(adjustedUrl, currentPage, userAgent, contentDisposition, mimetype, title, image)
                         }
                     }
 
@@ -186,7 +154,7 @@ fun BrowserScreen(webView: WebView) {
 
                             if (url?.contains("thingiverse.com/thing:") != true) return
 
-                            Log.d(logTag, "Thingiverse page detected, installing download-all hook on $url")
+                            Log.d(LOG_TAG, "Thingiverse page detected, installing download-all hook on $url")
 
                             val script = """
                                 (function() {
@@ -442,22 +410,6 @@ fun Modifier.simpleVerticalScrollbar(
     }
 }
 
-private fun adjustThingiverseDownloadUrl(currentPage: String, originalUrl: String): String {
-    val isThingiversePage = currentPage.contains("thingiverse.com/thing:")
-    val alreadyZip = currentPage.endsWith("/zip") || originalUrl.endsWith("/zip")
-
-    return if (isThingiversePage && !alreadyZip) {
-        val rawBase = if (originalUrl.contains("thingiverse.com/thing:")) originalUrl else currentPage
-        val cleanedBase = rawBase
-            .removeSuffix("/")
-            .replace("/files", "")
-
-        cleanedBase + "/zip"
-    } else {
-        originalUrl
-    }
-}
-
 fun executeDownload(context: Context, download: PendingDownload, folderName: String, dao: ModelDao, scope: kotlinx.coroutines.CoroutineScope) {
     val request = DownloadManager.Request(Uri.parse(download.url))
     val filename = URLUtil.guessFileName(download.url, download.contentDisposition, download.mimetype)
@@ -467,11 +419,19 @@ fun executeDownload(context: Context, download: PendingDownload, folderName: Str
     dm.enqueue(request)
 
     scope.launch(Dispatchers.IO) {
-        var localImagePath = ""
-        var thumbnailBytes: ByteArray? = null
+        val baseModel = ModelEntity(
+            title = download.title,
+            pageUrl = download.pageUrl,
+            localFilePath = "MeshVault/$folderName/$filename",
+            folderName = folderName,
+            thumbnailUrl = download.imageUrl,
+            thumbnailData = null
+        )
 
-        if (download.imageUrl.isNotEmpty()) {
-            try {
+        val (localImagePath, thumbnailBytes) = runCatching {
+            if (download.imageUrl.isEmpty()) {
+                "" to null
+            } else {
                 val imgFilename = "thumb_" + System.currentTimeMillis() + ".jpg"
                 val vaultDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "MeshVault/$folderName")
                 if (!vaultDir.exists()) vaultDir.mkdirs()
@@ -483,26 +443,24 @@ fun executeDownload(context: Context, download: PendingDownload, folderName: Str
                 connection.setRequestProperty("User-Agent", download.userAgent)
                 connection.connect()
 
-                connection.inputStream.use { input ->
+                val savedBytes = connection.inputStream.use { input ->
                     val bytes = input.readBytes()
-                    thumbnailBytes = resizeThumbnailBytes(bytes) ?: bytes
-
-                    FileOutputStream(imgFile).use { output ->
-                        output.write(thumbnailBytes ?: bytes)
-                    }
+                    resizeThumbnailBytes(bytes) ?: bytes
                 }
-                localImagePath = "$folderName/$imgFilename"
-            } catch (e: Exception) {
-                e.printStackTrace()
+
+                FileOutputStream(imgFile).use { output ->
+                    output.write(savedBytes)
+                }
+
+                "$folderName/$imgFilename" to savedBytes
             }
+        }.getOrElse { error ->
+            Log.w(LOG_TAG, "Thumbnail processing failed for ${download.url}", error)
+            "" to null
         }
 
-        val newModel = ModelEntity(
-            title = download.title,
-            pageUrl = download.pageUrl,
-            localFilePath = "MeshVault/$folderName/$filename",
-            folderName = folderName,
-            thumbnailUrl = if (localImagePath.isNotEmpty()) localImagePath else download.imageUrl,
+        val newModel = baseModel.copy(
+            thumbnailUrl = if (localImagePath.isNotEmpty()) localImagePath else baseModel.thumbnailUrl,
             thumbnailData = thumbnailBytes
         )
 
@@ -512,12 +470,27 @@ fun executeDownload(context: Context, download: PendingDownload, folderName: Str
         )
         destinationFile.parentFile?.mkdirs()
 
-        writeMetadataForModel(newModel)
-
-        dao.insertModel(newModel)
+        val metadataResult = runCatching { writeMetadataForModel(newModel) }
+        val insertResult = runCatching { dao.insertModel(newModel) }
 
         withContext(Dispatchers.Main) {
-            Toast.makeText(context, "Saved to $folderName", Toast.LENGTH_SHORT).show()
+            when {
+                metadataResult.isFailure && insertResult.isFailure -> {
+                    Toast.makeText(context, "Download saved but metadata failed", Toast.LENGTH_LONG).show()
+                    Log.e(LOG_TAG, "Metadata and DB insert failed for ${download.url}", metadataResult.exceptionOrNull())
+                }
+                insertResult.isFailure -> {
+                    Toast.makeText(context, "Download saved but library update failed", Toast.LENGTH_LONG).show()
+                    Log.e(LOG_TAG, "DB insert failed for ${download.url}", insertResult.exceptionOrNull())
+                }
+                metadataResult.isFailure -> {
+                    Toast.makeText(context, "Saved to $folderName (metadata limited)", Toast.LENGTH_LONG).show()
+                    Log.w(LOG_TAG, "Metadata write failed for ${download.url}", metadataResult.exceptionOrNull())
+                }
+                else -> {
+                    Toast.makeText(context, "Saved to $folderName", Toast.LENGTH_SHORT).show()
+                }
+            }
         }
     }
 }

@@ -49,7 +49,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import com.xalies.meshvault.adjustDownloadUrlForSite
+import com.xalies.meshvault.adjustFilenameForSite
 import com.xalies.meshvault.metadataScriptForPage
+import com.xalies.meshvault.pageLoadScriptForPage
 import com.xalies.meshvault.resizeThumbnailBytes
 import com.xalies.meshvault.writeMetadataForModel
 import kotlinx.coroutines.Dispatchers
@@ -130,14 +132,16 @@ fun BrowserScreen(webView: WebView) {
 
                             val parsedTitle = parts.getOrNull(0)?.takeIf { it.isNotBlank() }
                             val parsedImage = parts.getOrNull(1)?.takeIf { it.isNotBlank() }
+                            val parsedPageUrl = parts.getOrNull(2)?.takeIf { it.isNotBlank() }
 
                             val fallbackTitle = this.title?.takeIf { it.isNotBlank() }
                                 ?: URLUtil.guessFileName(adjustedUrl, contentDisposition, mimetype)
 
                             val title = parsedTitle ?: fallbackTitle ?: "Unknown"
                             val image = parsedImage ?: ""
+                            val pageUrl = parsedPageUrl ?: currentPage
 
-                            pendingDownload = PendingDownload(adjustedUrl, currentPage, userAgent, contentDisposition, mimetype, title, image)
+                            pendingDownload = PendingDownload(adjustedUrl, pageUrl, userAgent, contentDisposition, mimetype, title, image)
                         }
                     }
 
@@ -151,6 +155,13 @@ fun BrowserScreen(webView: WebView) {
 
                         override fun onPageFinished(view: WebView?, url: String?) {
                             super.onPageFinished(view, url)
+
+                            url?.let { currentUrl ->
+                                pageLoadScriptForPage(currentUrl)?.let { script ->
+                                    Log.d(LOG_TAG, "Running page-load script for $currentUrl")
+                                    view?.evaluateJavascript(script, null)
+                                }
+                            }
 
                             if (url?.contains("thingiverse.com/thing:") != true) return
 
@@ -412,7 +423,8 @@ fun Modifier.simpleVerticalScrollbar(
 
 fun executeDownload(context: Context, download: PendingDownload, folderName: String, dao: ModelDao, scope: kotlinx.coroutines.CoroutineScope) {
     val request = DownloadManager.Request(Uri.parse(download.url))
-    val filename = URLUtil.guessFileName(download.url, download.contentDisposition, download.mimetype)
+    val guessedFilename = URLUtil.guessFileName(download.url, download.contentDisposition, download.mimetype)
+    val filename = adjustFilenameForSite(download, guessedFilename)
     request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
     request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "MeshVault/$folderName/$filename")
     val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager

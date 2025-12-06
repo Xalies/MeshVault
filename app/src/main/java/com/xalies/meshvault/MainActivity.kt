@@ -1,8 +1,8 @@
 package com.xalies.meshvault
 
 import android.annotation.SuppressLint
-import android.content.Context
 import android.os.Bundle
+import android.content.Context // Added Context import
 import android.view.ViewGroup
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
@@ -26,19 +26,24 @@ import com.xalies.meshvault.ui.theme.MeshVaultTheme
 import com.google.android.gms.ads.MobileAds
 
 class MainActivity : ComponentActivity() {
+    private lateinit var billingHelper: BillingHelper
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         installSplashScreen()
 
         // Initialize AdMob
         MobileAds.initialize(this) {}
-        // Disable all ad audio
         MobileAds.setAppMuted(true)
         MobileAds.setAppVolume(0f)
 
+        // Initialize Billing
+        billingHelper = BillingHelper(this)
+        billingHelper.startConnection()
+
         setContent {
             MeshVaultTheme {
-                MainApp()
+                MainApp(billingHelper)
             }
         }
     }
@@ -53,7 +58,7 @@ private fun WebView.muteAudioIfAvailable() {
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun MainApp() {
+fun MainApp(billingHelper: BillingHelper) {
     val context = LocalContext.current
     val dao = remember { AppDatabase.getDatabase(context).modelDao() }
     val navController = rememberNavController()
@@ -67,13 +72,19 @@ fun MainApp() {
 
     var currentBrowserUrl by remember { mutableStateOf("https://www.printables.com") }
 
+    // Real ad-free status from the billing helper
+    val isAdFreeFromPurchase by billingHelper.isAdFree.collectAsState()
+
+    // Correct Logic: Show ads only if the version is 1.0+ AND the user has NOT paid.
+    val showAds = AdManager.isVersionReviewMode() && !isAdFreeFromPurchase
+
+
     LaunchedEffect(Unit) {
         if (onboardingCompleted) {
             resyncExistingVaultContents(context, dao)
         }
     }
 
-    // --- PERSISTENT WEBVIEW ---
     val sharedWebView = remember {
         WebView(context).apply {
             layoutParams = ViewGroup.LayoutParams(
@@ -96,7 +107,6 @@ fun MainApp() {
 
     Scaffold(
         bottomBar = {
-            // Hide BottomBar on Onboarding Screen
             if (currentRoute != "onboarding") {
                 NavigationBar {
                     NavigationBarItem(
@@ -146,6 +156,7 @@ fun MainApp() {
         ) {
             composable("onboarding") {
                 OnboardingScreen(
+                    billingHelper = billingHelper,
                     onFinish = {
                         navController.navigate("dashboard") {
                             popUpTo("onboarding") { inclusive = true }
@@ -156,6 +167,8 @@ fun MainApp() {
 
             composable("dashboard") {
                 DashboardScreen(
+                    billingHelper = billingHelper,
+                    showAds = showAds,
                     onSiteSelected = { url ->
                         currentBrowserUrl = url
                         sharedWebView.loadUrl(url)
@@ -174,6 +187,7 @@ fun MainApp() {
 
             composable("library") {
                 LibraryScreen(
+                    showAds = showAds,
                     onItemClick = { url ->
                         currentBrowserUrl = url
                         sharedWebView.loadUrl(url)

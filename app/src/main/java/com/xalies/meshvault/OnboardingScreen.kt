@@ -42,17 +42,23 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.TimeUnit
 
 @Composable
-fun OnboardingScreen(onFinish: () -> Unit) {
+fun OnboardingScreen(
+    billingHelper: BillingHelper,
+    onFinish: () -> Unit
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    // DEFINED HERE: Used later in button onClick
     val preferences = remember { context.getSharedPreferences("library_prefs", Context.MODE_PRIVATE) }
+
     val database = remember { AppDatabase.getDatabase(context) }
     val dao = database.modelDao()
+    val activity = context.findActivity()
 
     var isResyncing by remember { mutableStateOf(false) }
     var isDriveConnected by remember { mutableStateOf(GoogleSignIn.getLastSignedInAccount(context) != null) }
 
-    // --- 1. Folder Picker for "Old Library" ---
     val vaultPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri: Uri? ->
@@ -73,17 +79,15 @@ fun OnboardingScreen(onFinish: () -> Unit) {
         }
     }
 
-    // --- 2. Google Drive Sign-In Launcher ---
     val signInLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
         val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
         if (task.isSuccessful) {
-            // Sign-in success! Start the background worker.
             val backupRequest = PeriodicWorkRequestBuilder<BackupWorker>(1, TimeUnit.HOURS)
                 .setConstraints(
                     Constraints.Builder()
-                        .setRequiredNetworkType(NetworkType.UNMETERED) // Wi-Fi only
+                        .setRequiredNetworkType(NetworkType.UNMETERED)
                         .setRequiresBatteryNotLow(true)
                         .build()
                 )
@@ -101,7 +105,6 @@ fun OnboardingScreen(onFinish: () -> Unit) {
         }
     }
 
-    // --- UI CONTENT ---
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -113,7 +116,6 @@ fun OnboardingScreen(onFinish: () -> Unit) {
     ) {
         Spacer(modifier = Modifier.height(20.dp))
 
-        // App Logo
         Image(
             painter = painterResource(id = R.mipmap.ic_launcher_foreground),
             contentDescription = "App Logo",
@@ -140,7 +142,6 @@ fun OnboardingScreen(onFinish: () -> Unit) {
 
         Divider(color = MaterialTheme.colorScheme.outlineVariant)
 
-        // --- SECTION: HOW IT WORKS ---
         Card(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
@@ -152,7 +153,6 @@ fun OnboardingScreen(onFinish: () -> Unit) {
             }
         }
 
-        // --- SECTION: OLD FOLDER ---
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
                 text = "Have an existing library?",
@@ -183,7 +183,6 @@ fun OnboardingScreen(onFinish: () -> Unit) {
             }
         }
 
-        // --- SECTION: CLOUD BACKUP ---
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
                 text = "Secure your files",
@@ -198,7 +197,7 @@ fun OnboardingScreen(onFinish: () -> Unit) {
 
             if (isDriveConnected) {
                 OutlinedButton(
-                    onClick = { /* Already connected */ },
+                    onClick = { },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = false,
                     colors = ButtonDefaults.outlinedButtonColors(disabledContentColor = MaterialTheme.colorScheme.primary)
@@ -228,9 +227,9 @@ fun OnboardingScreen(onFinish: () -> Unit) {
 
         Spacer(modifier = Modifier.weight(1f))
 
-        // --- GET STARTED ---
         Button(
             onClick = {
+                // Using preferences here
                 preferences.edit().putBoolean("onboarding_completed", true).apply()
                 onFinish()
             },
@@ -241,6 +240,19 @@ fun OnboardingScreen(onFinish: () -> Unit) {
         ) {
             Text("Get Started", fontSize = 18.sp)
         }
+
+        TextButton(
+            onClick = {
+                if (activity != null) {
+                    billingHelper.launchPurchaseFlow(activity)
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Go Ad-Free (One-time purchase)", color = MaterialTheme.colorScheme.secondary)
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
     }
 }
 

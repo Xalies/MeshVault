@@ -15,15 +15,22 @@ android {
         applicationId = "com.xalies.meshvault"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        val timeCode = (System.currentTimeMillis() / 1000).toInt()
+        val versionNameValue = "0.81$timeCode" // Adds the code to the name for easy tracking
+        versionCode = timeCode
+        versionName = versionNameValue
+
+        // Ensure BuildConfig is generated and add the version name as a field
+        buildConfigField("String", "VERSION_NAME_VALUE", "\"$versionNameValue\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            // Includes native debug symbols in the App Bundle
+            ndk.debugSymbolLevel = "FULL" 
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -39,6 +46,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources {

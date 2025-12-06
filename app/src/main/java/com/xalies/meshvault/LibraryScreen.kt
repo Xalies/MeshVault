@@ -90,7 +90,10 @@ val FOLDER_ICONS = mapOf(
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun LibraryScreen(onItemClick: (String) -> Unit) {
+fun LibraryScreen(
+    showAds: Boolean,
+    onItemClick: (String) -> Unit
+) {
     val context = LocalContext.current
     val preferences = remember { context.getSharedPreferences("library_prefs", Context.MODE_PRIVATE) }
     val database = remember { AppDatabase.getDatabase(context) }
@@ -129,6 +132,8 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
 
     // Server Instance
     val wifiServer = remember { WifiServer(context.applicationContext, dao) }
+
+    // Use the utility function here
     val activity = context.findActivity()
 
     // Data Loading
@@ -289,17 +294,19 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
                                     } else {
                                         val startCount = preferences.getInt("server_start_count", 0) + 1
                                         preferences.edit().putInt("server_start_count", startCount).apply()
-                                        val shouldShowAd = startCount % 3 == 0
+
+                                        val shouldShowInterstitial = showAds && (startCount % 3 == 0)
+
                                         Toast.makeText(
                                             context,
-                                            if (shouldShowAd) "Starting server..." else "Starting server...",
+                                            "Starting server...",
                                             Toast.LENGTH_SHORT
                                         ).show()
                                         try {
                                             wifiServer.start()
                                             serverIp = getLocalIpAddress()
                                             isServerRunning = true
-                                            if (shouldShowAd) {
+                                            if (shouldShowInterstitial) {
                                                 InterstitialAd.load(
                                                     context,
                                                     "ca-app-pub-9083635854272688/5217396568",
@@ -459,20 +466,23 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
             }
         }
 
-        // 3. BANNER AD
-        AndroidView(
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-            factory = { context ->
-                AdView(context).apply {
-                    setAdSize(AdSize.BANNER);
-                    setAdUnitId("ca-app-pub-9083635854272688/1452548007");
-                    loadAd(AdRequest.Builder().build())
+        if (showAds) {
+            AndroidView(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                factory = { context ->
+                    AdView(context).apply {
+                        setAdSize(AdSize.BANNER);
+                        setAdUnitId("ca-app-pub-9083635854272688/1452548007");
+                        loadAd(AdRequest.Builder().build())
+                    }
                 }
-            }
-        )
+            )
+        }
     }
 
-    // --- DIALOGS ---
+    // --- DIALOGS (Existing folder/model dialogs remain unchanged) ---
     if (showCreateFolderDialog) {
         var newFolderName by remember { mutableStateOf("") }
         var selectedColor by remember { mutableLongStateOf(FOLDER_COLORS.random()) }
@@ -649,6 +659,8 @@ fun LibraryScreen(onItemClick: (String) -> Unit) {
     }
 }
 
+// --- HELPER FUNCTIONS ---
+
 private suspend fun deleteFolderAndContents(dao: ModelDao, folderName: String) {
     val folderPrefix = "$folderName/%"
     withContext(Dispatchers.IO) {
@@ -782,13 +794,4 @@ fun ModelCardWithImage(model: ModelEntity, onClick: () -> Unit, onDelete: () -> 
             DropdownMenuItem(text = { Text("Delete") }, onClick = { showContextMenu = false; onDelete() }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) })
         }
     }
-}
-
-private fun Context.findActivity(): Activity? {
-    var currentContext: Context = this
-    while (currentContext is ContextWrapper) {
-        if (currentContext is Activity) return currentContext
-        currentContext = currentContext.baseContext
-    }
-    return null
 }

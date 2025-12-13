@@ -194,7 +194,104 @@ private val CULTS3D_PAGE_LOAD_SCRIPT = """
     })();
 """.trimIndent()
 
+private fun parseFilenameFromContentDisposition(contentDisposition: String?): String? {
+    if (contentDisposition.isNullOrBlank()) return null
+
+    val match = Regex("filename\\*?=([^;]+)", RegexOption.IGNORE_CASE).find(contentDisposition) ?: return null
+    var candidate = match.groupValues.getOrNull(1)?.trim()?.trim('"') ?: return null
+
+    if (candidate.startsWith("UTF-8''", ignoreCase = true)) {
+        candidate = candidate.substringAfter("''")
+    }
+
+    candidate = candidate.substringAfterLast('/')
+
+    val decoded = runCatching { java.net.URLDecoder.decode(candidate, "UTF-8") }.getOrDefault(candidate)
+    return decoded.takeIf { it.isNotBlank() }
+}
+
+private fun queryFilenameFromUrl(url: String): String? {
+    val uri = android.net.Uri.parse(url)
+
+    val fromQuery = listOf("filename", "file", "name", "f")
+        .firstNotNullOfOrNull { key ->
+            uri.getQueryParameter(key)?.takeIf { it.isNotBlank() }
+        }
+
+    if (!fromQuery.isNullOrBlank()) {
+        val decoded = runCatching { java.net.URLDecoder.decode(fromQuery, "UTF-8") }.getOrDefault(fromQuery)
+        val cleaned = decoded.substringAfterLast('/')
+        if (cleaned.isNotBlank()) return cleaned
+    }
+
+    val lastPath = uri.lastPathSegment
+    if (!lastPath.isNullOrBlank() && lastPath.contains('.')) {
+        return lastPath
+    }
+
+    return null
+}
+
+private fun guessExtensionFromMime(mimetype: String?): String? {
+    val mime = mimetype?.lowercase()?.trim().orEmpty()
+    return when {
+        mime.contains("stl") -> "stl"
+        mime.contains("gcode") -> "gcode"
+        mime.contains("3mf") -> "3mf"
+        mime.contains("zip") -> "zip"
+        mime.contains("rar") -> "rar"
+        mime.contains("octet-stream") -> null
+        mime.isNotBlank() -> android.webkit.MimeTypeMap.getSingleton().getExtensionFromMimeType(mime)
+        else -> null
+    }
+}
+
+private fun sanitizeFilename(raw: String, mimetype: String): String {
+    if (raw.isBlank()) return ""
+
+    val decoded = runCatching { java.net.URLDecoder.decode(raw, "UTF-8") }.getOrDefault(raw)
+    val cleaned = decoded
+        .substringAfterLast('/')
+        .replace("[\\\\:*?\"<>|]".toRegex(), "-")
+        .trim()
+
+    val hasExtension = cleaned.contains('.') && !cleaned.endsWith(".bin", ignoreCase = true)
+    if (hasExtension) return cleaned
+
+    val ext = guessExtensionFromMime(mimetype)
+    return if (ext.isNullOrBlank()) cleaned else "$cleaned.$ext"
+}
+
 private val SITE_HANDLERS = listOf(
+    SiteDownloadHandler(
+        domains = listOf("printables.com", "prusa3d.com"),
+        filenameOverride = { download, fallback ->
+            if (!fallback.endsWith(".bin", ignoreCase = true)) return@SiteDownloadHandler fallback
+
+            parseFilenameFromContentDisposition(download.contentDisposition)?.let { parsed ->
+                val sanitized = sanitizeFilename(parsed, download.mimetype)
+                if (sanitized.isNotBlank() && !sanitized.endsWith(".bin", ignoreCase = true)) {
+                    return@SiteDownloadHandler sanitized
+                }
+            }
+
+            queryFilenameFromUrl(download.url)?.let { fromUrl ->
+                val sanitized = sanitizeFilename(fromUrl, download.mimetype)
+                if (sanitized.isNotBlank() && !sanitized.endsWith(".bin", ignoreCase = true)) {
+                    return@SiteDownloadHandler sanitized
+                }
+            }
+
+            val ext = guessExtensionFromMime(download.mimetype) ?: "stl"
+            val safeTitle = download.title
+                .ifBlank { "printables-file" }
+                .replace("[^A-Za-z0-9._-]+".toRegex(), "-")
+                .trim('-')
+                .ifBlank { "printables-file" }
+
+            "$safeTitle.$ext"
+        }
+    ),
     SiteDownloadHandler(
         domains = listOf("thingiverse.com"),
         adjustDownloadUrl = { currentPage, originalUrl ->

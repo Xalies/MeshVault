@@ -85,6 +85,11 @@ fun BrowserScreen(webView: WebView) {
     // Progress State
     var loadProgress by remember { mutableFloatStateOf(0f) }
 
+    // Make sure starter folders exist even if the user hasn't visited the Library tab yet.
+    LaunchedEffect(Unit) {
+        ensureDefaultFoldersInitialized(context, dao)
+    }
+
     BackHandler(enabled = true) {
         if (webView.canGoBack()) {
             webView.goBack()

@@ -139,30 +139,8 @@ fun LibraryScreen(
     // Data Loading
     val allFolders by dao.getAllFolders().collectAsState(initial = emptyList())
 
-    // --- DEFAULT FOLDERS LOGIC ---
     LaunchedEffect(Unit) {
-        val defaultsInitialized = preferences.getBoolean("defaults_initialized", false)
-
-        if (!defaultsInitialized) {
-            val defaults = listOf(
-                FolderEntity("Household", color = FOLDER_COLORS.random(), iconName = "Home"),
-                FolderEntity("Games", color = FOLDER_COLORS.random(), iconName = "Game"),
-                FolderEntity("Gadgets", color = FOLDER_COLORS.random(), iconName = "Build"),
-                FolderEntity("Cosplay", color = FOLDER_COLORS.random(), iconName = "Face"),
-                // Subfolders for Cosplay
-                FolderEntity("Cosplay/Masks", color = FOLDER_COLORS.random(), iconName = "Face"),
-                FolderEntity("Cosplay/Props", color = FOLDER_COLORS.random(), iconName = "Star")
-            )
-
-            defaults.forEach { folder ->
-                dao.insertFolder(folder)
-            }
-
-            preferences.edit().putBoolean("defaults_initialized", true).apply()
-        }
-    }
-
-    LaunchedEffect(Unit) {
+        ensureDefaultFoldersInitialized(context, dao)
         resyncExistingVaultContents(context, dao)
     }
 

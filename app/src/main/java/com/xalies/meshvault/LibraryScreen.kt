@@ -113,11 +113,7 @@ fun LibraryScreen(
     var folderDeleteCount by remember { mutableStateOf<Int?>(null) }
     var showDeleteWarning by remember { mutableStateOf(false) }
     var isResyncing by remember { mutableStateOf(false) }
-    var pendingThumbnailChange by remember { mutableStateOf<ModelEntity?>(null) }
-
     // --- NEW DIALOG STATES ---
-    var showModelEditDialog by remember { mutableStateOf(false) }
-    var modelToEdit by remember { mutableStateOf<ModelEntity?>(null) }
     var showModelDeleteDialog by remember { mutableStateOf(false) }
     var modelToDelete by remember { mutableStateOf<ModelEntity?>(null) }
 
@@ -169,28 +165,6 @@ fun LibraryScreen(
         } else {
             Toast.makeText(context, "Sign-In Failed", Toast.LENGTH_SHORT).show()
         }
-    }
-
-    val thumbnailPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        val model = pendingThumbnailChange
-
-        if (uri != null && model != null) {
-            scope.launch {
-                val updated = updateModelThumbnailFromUri(context, dao, model, uri)
-
-                withContext(Dispatchers.Main) {
-                    if (updated != null) {
-                        Toast.makeText(context, "Thumbnail updated", Toast.LENGTH_SHORT).show()
-                    } else {
-                        Toast.makeText(context, "Unable to update thumbnail", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            }
-        }
-
-        pendingThumbnailChange = null
     }
 
     val visibleFolders = remember(allFolders, currentFolder) {
@@ -421,14 +395,6 @@ fun LibraryScreen(
                                             onDelete = {
                                                 modelToDelete = model
                                                 showModelDeleteDialog = true
-                                            },
-                                            onChangeThumbnail = {
-                                                pendingThumbnailChange = model
-                                                thumbnailPickerLauncher.launch("image/*")
-                                            },
-                                            onEdit = {
-                                                modelToEdit = model
-                                                showModelEditDialog = true
                                             }
                                         )
                                     }
@@ -586,35 +552,6 @@ fun LibraryScreen(
         )
     }
 
-    if (showModelEditDialog && modelToEdit != null) {
-        val model = modelToEdit!!
-        var editedTitle by remember { mutableStateOf(model.title) }
-        var editedUrl by remember { mutableStateOf(model.pageUrl) }
-
-        AlertDialog(
-            onDismissRequest = { showModelEditDialog = false },
-            title = { Text("Edit Model Details") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = editedTitle, onValueChange = { editedTitle = it }, label = { Text("Title") }, singleLine = true)
-                    OutlinedTextField(value = editedUrl, onValueChange = { editedUrl = it }, label = { Text("Source URL") })
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    scope.launch {
-                        val updatedModel = model.copy(title = editedTitle, pageUrl = editedUrl)
-                        dao.updateModel(updatedModel)
-                        withContext(Dispatchers.IO) { writeMetadataForModel(updatedModel) }
-                        showModelEditDialog = false
-                        Toast.makeText(context, "Saved", Toast.LENGTH_SHORT).show()
-                    }
-                }) { Text("Save") }
-            },
-            dismissButton = { TextButton(onClick = { showModelEditDialog = false }) { Text("Cancel") } }
-        )
-    }
-
     if (showModelDeleteDialog && modelToDelete != null) {
         AlertDialog(
             onDismissRequest = { showModelDeleteDialog = false },
@@ -681,7 +618,7 @@ private fun deleteMetadataIfExists(model: ModelEntity) {
     deleteFileIfExists(metadataFile)
 }
 
-private suspend fun updateModelThumbnailFromUri(context: Context, dao: ModelDao, model: ModelEntity, uri: Uri): ModelEntity? {
+suspend fun updateModelThumbnailFromUri(context: Context, dao: ModelDao, model: ModelEntity, uri: Uri): ModelEntity? {
     return withContext(Dispatchers.IO) {
         val contentResolver = context.contentResolver
         val rawBytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return@withContext null
@@ -735,7 +672,7 @@ fun ColorfulFolderCard(folder: FolderEntity, onClick: () -> Unit, onLongClick: (
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ModelCardWithImage(model: ModelEntity, onClick: () -> Unit, onDelete: () -> Unit, onChangeThumbnail: () -> Unit, onEdit: () -> Unit) {
+fun ModelCardWithImage(model: ModelEntity, onClick: () -> Unit, onDelete: () -> Unit) {
     val imageBitmap = remember(model.thumbnailData) {
         model.thumbnailData?.let { data -> BitmapFactory.decodeByteArray(data, 0, data.size)?.asImageBitmap() }
     }
@@ -767,8 +704,6 @@ fun ModelCardWithImage(model: ModelEntity, onClick: () -> Unit, onDelete: () -> 
             }
         }
         DropdownMenu(expanded = showContextMenu, onDismissRequest = { showContextMenu = false }) {
-            DropdownMenuItem(text = { Text("Edit") }, onClick = { showContextMenu = false; onEdit() }, leadingIcon = { Icon(Icons.Default.Edit, null) })
-            DropdownMenuItem(text = { Text("Change Thumbnail") }, onClick = { showContextMenu = false; onChangeThumbnail() }, leadingIcon = { Icon(Icons.Default.Image, null) })
             DropdownMenuItem(text = { Text("Delete") }, onClick = { showContextMenu = false; onDelete() }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) })
         }
     }

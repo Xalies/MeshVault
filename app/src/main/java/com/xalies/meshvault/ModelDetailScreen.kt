@@ -1,5 +1,6 @@
 package com.xalies.meshvault
 
+import android.annotation.SuppressLint
 import android.graphics.BitmapFactory
 import android.os.Environment
 import androidx.compose.foundation.background
@@ -30,8 +31,10 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import android.webkit.WebView
 import coil.compose.AsyncImage
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
@@ -39,6 +42,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import android.widget.Toast
+import java.util.Locale
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -129,6 +133,12 @@ fun ModelDetailScreen(
             is ModelDetailState.Loaded -> {
                 val model = state.model
                 val scrollState = rememberScrollState()
+                val modelFile = remember(model.localFilePath) {
+                    File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), model.localFilePath)
+                }
+                val modelExt = remember(modelFile.path) { modelFile.extension.lowercase(Locale.getDefault()) }
+                val canPreview3d = remember(modelExt) { modelExt in setOf("stl", "obj") }
+                var showViewer by remember { mutableStateOf(false) }
 
                 Column(
                     modifier = Modifier
@@ -138,7 +148,17 @@ fun ModelDetailScreen(
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    ModelThumbnail(model)
+                    ModelThumbnail(
+                        model = model,
+                        canPreview3d = canPreview3d,
+                        onPreviewRequested = {
+                            if (canPreview3d && modelFile.exists()) {
+                                showViewer = true
+                            } else if (canPreview3d) {
+                                Toast.makeText(context, "Model file not found for preview", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    )
 
                     Text(model.title, style = MaterialTheme.typography.headlineSmall)
 
@@ -197,6 +217,22 @@ fun ModelDetailScreen(
                         Spacer(Modifier.width(8.dp))
                         Text("Open source page")
                     }
+
+                    if (canPreview3d) {
+                        Text(
+                            text = "Tap the image to preview the 3D model (STL / OBJ).",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+
+                if (showViewer && canPreview3d) {
+                    Model3DViewerDialog(
+                        file = modelFile,
+                        extension = modelExt,
+                        onDismiss = { showViewer = false }
+                    )
                 }
             }
         }
@@ -247,8 +283,148 @@ fun ModelDetailScreen(
     }
 }
 
+@SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun ModelThumbnail(model: ModelEntity) {
+private fun Model3DViewerDialog(file: File, extension: String, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        },
+        text = {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(360.dp)
+            ) {
+                AndroidView(
+                    factory = { context ->
+                        WebView(context).apply {
+                            settings.javaScriptEnabled = true
+                            settings.allowFileAccess = true
+                            settings.allowFileAccessFromFileURLs = true
+                            settings.domStorageEnabled = true
+                            settings.loadWithOverviewMode = true
+                            settings.useWideViewPort = true
+                        }
+                    },
+                    update = { webView ->
+                        val parentDir = file.parentFile?.let { "file://${it.absolutePath}/" } ?: "file:///"
+                        val modelName = file.name
+                        val html = buildString {
+                            append(
+                                """
+                                <!DOCTYPE html>
+                                <html>
+                                <head>
+                                  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                                  <style>
+                                    body, html { margin:0; padding:0; overflow:hidden; background:#111; }
+                                    #container { width:100vw; height:100vh; }
+                                  </style>
+                                </head>
+                                <body>
+                                  <div id="container"></div>
+                                  <script type="module">
+                                    import * as THREE from 'https://unpkg.com/three@0.152.2/build/three.module.js';
+                                    import { OrbitControls } from 'https://unpkg.com/three@0.152.2/examples/jsm/controls/OrbitControls.js';
+                                    import { STLLoader } from 'https://unpkg.com/three@0.152.2/examples/jsm/loaders/STLLoader.js';
+                                    import { OBJLoader } from 'https://unpkg.com/three@0.152.2/examples/jsm/loaders/OBJLoader.js';
+
+                                    const scene = new THREE.Scene();
+                                    scene.background = new THREE.Color(0x111111);
+                                    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+                                    camera.position.set(0, 0.5, 1.5);
+
+                                    const renderer = new THREE.WebGLRenderer({ antialias: true });
+                                    renderer.setSize(window.innerWidth, window.innerHeight);
+                                    document.getElementById('container').appendChild(renderer.domElement);
+
+                                    const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
+                                    scene.add(hemi);
+                                    const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+                                    dir.position.set(5, 10, 7.5);
+                                    scene.add(dir);
+
+                                    const controls = new OrbitControls(camera, renderer.domElement);
+                                    controls.enableDamping = true;
+
+                                    const loaderType = "${extension.lowercase(Locale.getDefault())}";
+                                    const modelUrl = new URL("${modelName}", window.location.href).toString();
+
+                                    function fitCameraToObject(object) {
+                                      const box = new THREE.Box3().setFromObject(object);
+                                      const size = box.getSize(new THREE.Vector3());
+                                      const center = box.getCenter(new THREE.Vector3());
+                                      const maxDim = Math.max(size.x, size.y, size.z);
+                                      const fitHeightDistance = maxDim / (2 * Math.atan(Math.PI * camera.fov / 360));
+                                      const fitWidthDistance = fitHeightDistance / camera.aspect;
+                                      const distance = Math.max(fitHeightDistance, fitWidthDistance);
+                                      const direction = controls.target.clone()
+                                        .sub(camera.position)
+                                        .normalize()
+                                        .multiplyScalar(distance);
+                                      controls.target.copy(center);
+                                      camera.position.copy(center).sub(direction);
+                                      camera.near = distance / 100;
+                                      camera.far = distance * 100;
+                                      camera.updateProjectionMatrix();
+                                      controls.update();
+                                    }
+
+                                    function onLoad(object) {
+                                      scene.add(object);
+                                      fitCameraToObject(object);
+                                      animate();
+                                    }
+
+                                    if (loaderType === "stl") {
+                                      const loader = new STLLoader();
+                                      loader.load(modelUrl, geometry => {
+                                        const material = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.1, roughness: 0.6 });
+                                        const mesh = new THREE.Mesh(geometry, material);
+                                        mesh.castShadow = true;
+                                        mesh.receiveShadow = true;
+                                        onLoad(mesh);
+                                      });
+                                    } else {
+                                      const loader = new OBJLoader();
+                                      loader.load(modelUrl, obj => {
+                                        obj.traverse(child => {
+                                          if (child.isMesh) {
+                                            child.material = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.1, roughness: 0.6 });
+                                          }
+                                        });
+                                        onLoad(obj);
+                                      });
+                                    }
+
+                                    window.addEventListener('resize', () => {
+                                      camera.aspect = window.innerWidth / window.innerHeight;
+                                      camera.updateProjectionMatrix();
+                                      renderer.setSize(window.innerWidth, window.innerHeight);
+                                    });
+
+                                    function animate() {
+                                      requestAnimationFrame(animate);
+                                      controls.update();
+                                      renderer.render(scene, camera);
+                                    }
+                                  </script>
+                                </body>
+                                </html>
+                                """.trimIndent()
+                            )
+                        }
+                        webView.loadDataWithBaseURL(parentDir, html, "text/html", "utf-8", null)
+                    }
+                )
+            }
+        }
+    )
+}
+@Composable
+private fun ModelThumbnail(model: ModelEntity, canPreview3d: Boolean, onPreviewRequested: () -> Unit) {
     val imageBitmap = remember(model.thumbnailData) {
         model.thumbnailData?.let { data ->
             BitmapFactory.decodeByteArray(data, 0, data.size)?.asImageBitmap()
@@ -268,10 +444,13 @@ private fun ModelThumbnail(model: ModelEntity) {
         } else null
     }
 
+    val clickableModifier = if (canPreview3d) Modifier.clickable { onPreviewRequested() } else Modifier
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .height(220.dp),
+            .height(220.dp)
+            .then(clickableModifier),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {

@@ -62,6 +62,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.Locale
 
 private const val LOG_TAG = "BrowserScreen"
 
@@ -153,7 +154,8 @@ fun BrowserScreen(webView: WebView) {
                     webViewClient = object : WebViewClient() {
                         // --- NEW: AD BLOCKING INTERCEPTOR ---
                         override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
-                            if (AdBlocker.shouldBlock(request?.url?.toString())) {
+                            val url = request?.url?.toString()
+                            if (!isPrintables(url) && AdBlocker.shouldBlock(url)) {
                                 Log.d(LOG_TAG, "Blocking Ad: ${request?.url}")
                                 return AdBlocker.createEmptyResource()
                             }
@@ -171,7 +173,9 @@ fun BrowserScreen(webView: WebView) {
                             super.onPageFinished(view, url)
 
                             // --- NEW: INJECT COOKIE HIDER ---
-                            view?.evaluateJavascript(AdBlocker.HIDE_ANNOYANCES_SCRIPT, null)
+                            if (!isPrintables(url)) {
+                                view?.evaluateJavascript(AdBlocker.HIDE_ANNOYANCES_SCRIPT, null)
+                            }
 
                             url?.let { currentUrl ->
                                 pageLoadScriptForPage(currentUrl)?.let { script ->
@@ -436,6 +440,11 @@ fun Modifier.simpleVerticalScrollbar(
             alpha = alpha
         )
     }
+}
+
+private fun isPrintables(url: String?): Boolean {
+    val lower = url?.lowercase(Locale.ROOT) ?: return false
+    return lower.contains("printables.com") || lower.contains("prusa3d.com")
 }
 
 fun executeDownload(context: Context, download: PendingDownload, folderName: String, dao: ModelDao, scope: kotlinx.coroutines.CoroutineScope) {

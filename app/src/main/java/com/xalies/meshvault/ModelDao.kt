@@ -34,6 +34,9 @@ interface ModelDao {
     @Query("SELECT * FROM models WHERE folderName = :folderName AND isDeleted = 0 ORDER BY dateAdded DESC")
     fun getModelsInFolder(folderName: String): Flow<List<ModelEntity>>
 
+    @Query("SELECT * FROM models WHERE id = :modelId LIMIT 1")
+    fun getModelById(modelId: Int): Flow<ModelEntity?>
+
     @Query("SELECT * FROM models WHERE folderName = :folderName AND isDeleted = 0")
     suspend fun getModelsInFolderList(folderName: String): List<ModelEntity>
 

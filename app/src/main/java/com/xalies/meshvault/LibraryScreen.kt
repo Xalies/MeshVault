@@ -92,7 +92,7 @@ val FOLDER_ICONS = mapOf(
 @Composable
 fun LibraryScreen(
     showAds: Boolean,
-    onItemClick: (String) -> Unit
+    onModelClick: (Int) -> Unit
 ) {
     val context = LocalContext.current
     val preferences = remember { context.getSharedPreferences("library_prefs", Context.MODE_PRIVATE) }
@@ -417,7 +417,7 @@ fun LibraryScreen(
                                     items(models) { model ->
                                         ModelCardWithImage(
                                             model = model,
-                                            onClick = { onItemClick(model.pageUrl) },
+                                            onClick = { onModelClick(model.id) },
                                             onDelete = {
                                                 modelToDelete = model
                                                 showModelDeleteDialog = true

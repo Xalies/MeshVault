@@ -18,10 +18,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.xalies.meshvault.ui.theme.MeshVaultTheme
 import com.google.android.gms.ads.MobileAds
 
@@ -188,13 +190,26 @@ fun MainApp(billingHelper: BillingHelper) {
             composable("library") {
                 LibraryScreen(
                     showAds = showAds,
-                    onItemClick = { url ->
+                    onModelClick = { modelId ->
+                        navController.navigate("modelDetails/$modelId")
+                    }
+                )
+            }
+
+            composable(
+                route = "modelDetails/{modelId}",
+                arguments = listOf(navArgument("modelId") { type = NavType.IntType })
+            ) { backStackEntry ->
+                val modelId = backStackEntry.arguments?.getInt("modelId") ?: return@composable
+
+                ModelDetailScreen(
+                    modelId = modelId,
+                    onBack = { navController.popBackStack() },
+                    onOpenInBrowser = { url ->
                         currentBrowserUrl = url
                         sharedWebView.loadUrl(url)
                         navController.navigate("browser") {
-                            popUpTo(navController.graph.findStartDestination().id) {
-                                saveState = true
-                            }
+                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                             launchSingleTop = true
                             restoreState = true
                         }
